@@ -370,8 +370,8 @@ export function showBlackHole() {
   if (warpedStarfield) warpedStarfield.visible = true;
   bhCam.center.set(0, 0, 0);
   bhCam.theta = 1.2;
-  bhCam.phi = Math.PI / 2.8;
-  bhCam.radius = 160;
+  bhCam.phi = Math.PI / 2.15;
+  bhCam.radius = 260;
   bhCam.roll = 0;
 }
 
