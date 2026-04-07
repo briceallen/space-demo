@@ -1375,6 +1375,9 @@ function enterPlaying() {
 
   showAll();
   updateNavButtons();
+
+  // Default to black hole view on startup
+  enterBlackHoleView();
 }
 
 // ── Hook focusOn / showAll for game ─────────────────────────────────
