@@ -2,7 +2,7 @@
 
 ## Overview
 
-Endless Horizons is a browser-based, interactive 3D space and civilization builder demo inspired by Endless Space. Built entirely with Three.js (v0.164.0), Tailwind CSS, and vanilla JavaScript ES modules, it runs directly in any modern browser—no build tools, no bundlers, no frameworks required.
+This is a browser-based, interactive 3D space demo. Built entirely with Three.js (v0.164.0), Tailwind CSS, and vanilla JavaScript ES modules, it runs directly in any modern browser—no build tools, no bundlers, no frameworks required.
 
 The project features:
 - A fully interactive 3D solar system with a sun and multiple planets
