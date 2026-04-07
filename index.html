@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Endless Horizons</title>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.164.0/build/three.module.js"
+      }
+    }
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { game: ['"Inter"', 'system-ui', 'sans-serif'] },
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    canvas { display: block; }
+    .panel-glass {
+      background: rgba(10, 14, 28, 0.75);
+      border: 1px solid rgba(255,255,255,0.08);
+      backdrop-filter: blur(12px);
+    }
+    .btn-glass {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(8px);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, opacity 0.4s;
+    }
+    .btn-glass:hover { background: rgba(255,255,255,0.14); color: #fff; border-color: rgba(255,255,255,0.25); }
+    .fade-panel { transition: opacity 0.35s, transform 0.35s; }
+    .fade-panel.hidden-panel { opacity: 0; pointer-events: none; transform: translateY(8px); }
+    #show-all-btn { opacity: 0; pointer-events: none; transition: opacity 0.4s, background 0.25s, color 0.25s; }
+    #show-all-btn.visible { opacity: 1; pointer-events: auto; }
+    .resource-pip { min-width: 90px; }
+    #bookmark-select option { background: rgb(10, 14, 28); color: rgba(255,255,255,0.7); }
+  </style>
+</head>
+<body class="w-full h-screen overflow-hidden bg-black font-game text-white antialiased">
+
+  <!-- ═══════════ TOP HUD BAR ═══════════ -->
+  <div id="hud-top" class="fixed top-0 left-0 right-0 z-20 fade-panel hidden-panel">
+    <div class="flex items-center justify-between px-4 py-2 panel-glass border-t-0 border-l-0 border-r-0 rounded-none">
+      <!-- Left: Time -->
+      <div id="hud-game-info" class="flex items-center gap-3">
+        <div class="flex items-center gap-1.5">
+          <button id="btn-pause" class="btn-glass w-7 h-7 rounded flex items-center justify-center text-xs cursor-pointer" title="Pause">⏸</button>
+          <button id="btn-speed1" class="btn-glass w-7 h-7 rounded flex items-center justify-center text-xs cursor-pointer text-emerald-400 border-emerald-400/30" title="Play">▶</button>
+        </div>
+        <div class="text-xs text-white/50 tracking-wide ml-1">
+          Day <span id="hud-day" class="text-white/80 font-medium">1</span>
+          &middot; Year <span id="hud-year" class="text-white/80 font-medium">1</span>
+        </div>
+      </div>
+      <!-- Center: Resources -->
+      <div id="hud-resources" class="flex items-center gap-4">
+        <div class="resource-pip flex items-center gap-1.5 text-xs">
+          <span class="text-yellow-400/80">⚡</span>
+          <span class="text-white/50">Energy</span>
+          <span id="res-energy" class="text-white/90 font-medium ml-auto">100</span>
+          <span id="res-energy-rate" class="text-emerald-400/70 text-[10px]">+0</span>
+        </div>
+        <div class="resource-pip flex items-center gap-1.5 text-xs">
+          <span class="text-stone-400/80">⛏</span>
+          <span class="text-white/50">Minerals</span>
+          <span id="res-minerals" class="text-white/90 font-medium ml-auto">50</span>
+          <span id="res-minerals-rate" class="text-emerald-400/70 text-[10px]">+0</span>
+        </div>
+        <div class="resource-pip flex items-center gap-1.5 text-xs">
+          <span class="text-green-400/80">🌾</span>
+          <span class="text-white/50">Food</span>
+          <span id="res-food" class="text-white/90 font-medium ml-auto">50</span>
+          <span id="res-food-rate" class="text-emerald-400/70 text-[10px]">+0</span>
+        </div>
+        <div class="resource-pip flex items-center gap-1.5 text-xs">
+          <span class="text-blue-400/80">🔬</span>
+          <span class="text-white/50">Research</span>
+          <span id="res-research" class="text-white/90 font-medium ml-auto">0</span>
+          <span id="res-research-rate" class="text-emerald-400/70 text-[10px]">+0</span>
+        </div>
+        <div class="resource-pip flex items-center gap-1.5 text-xs">
+          <span class="text-slate-300/80">⚙</span>
+          <span class="text-white/50">Alloys</span>
+          <span id="res-alloys" class="text-white/90 font-medium ml-auto">0</span>
+          <span id="res-alloys-rate" class="text-emerald-400/70 text-[10px]">+0</span>
+        </div>
+      </div>
+      <!-- Navigation -->
+      <div id="hud-nav" class="flex items-center gap-2">
+        <button id="nav-solar-system" class="btn-glass px-3 py-1.5 rounded-lg text-xs text-white/60 cursor-pointer hover:text-white tracking-wide" style="display:none">
+          ☀ Current Solar System
+        </button>
+        <button id="nav-local-cluster" class="btn-glass px-3 py-1.5 rounded-lg text-xs text-white/60 cursor-pointer hover:text-white tracking-wide" style="display:none">
+          🌌 Local Cluster
+        </button>
+        <button id="nav-black-hole" class="btn-glass px-3 py-1.5 rounded-lg text-xs text-white/60 cursor-pointer hover:text-white tracking-wide" style="display:none">
+          🕳️ Black Hole
+        </button>
+      </div>
+      <!-- Right: Save -->
+      <div id="hud-pop-save" class="flex items-center gap-3">
+        <div id="hud-pop-wrap" class="text-xs text-white/50">
+          Pop <span id="hud-pop" class="text-white/80 font-medium">0</span>
+        </div>
+        <button id="btn-save" class="btn-glass px-3 py-1 rounded text-[10px] text-white/40 cursor-pointer hover:text-white/70" title="Save">
+          💾 Save
+        </button>
+        <button id="btn-export" class="btn-glass px-3 py-1 rounded text-[10px] text-white/40 cursor-pointer hover:text-white/70" title="Export Save">
+          📤 Export
+        </button>
+        <button id="btn-import" class="btn-glass px-3 py-1 rounded text-[10px] text-white/40 cursor-pointer hover:text-white/70" title="Import Save">
+          📥 Import
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ SYSTEM VIEW BUTTON ═══════════ -->
+  <button
+    id="show-all-btn"
+    class="fixed left-5 top-1/2 -translate-y-1/2 z-10
+           px-4 py-2 rounded-lg btn-glass
+           text-sm text-white/70 cursor-pointer select-none"
+  >
+    &larr; System View
+  </button>
+
+  <!-- ═══════════ LOCAL CLUSTER UI (visible only in cluster view) ═══════════ -->
+  <div id="galaxy-label" class="fixed top-16 left-4 z-30 panel-glass rounded-lg px-4 py-2 text-sm text-white/70 tracking-wide" style="display:none">
+    Current: Sol
+  </div>
+  <div id="cluster-tooltip" class="fixed z-50 panel-glass rounded-lg px-3 py-1.5 text-xs text-white/90 tracking-wide pointer-events-none" style="display:none"></div>
+  <button id="btn-cluster-center" class="fixed top-16 left-1/2 -translate-x-1/2 z-30 btn-glass px-5 py-1.5 rounded-lg text-xs text-white/60 cursor-pointer hover:text-white tracking-wide" style="display:none">
+    ⊕ Center
+  </button>
+  <div class="fixed bottom-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none text-[10px] text-white/20 tracking-widest" id="cluster-hints" style="display:none">
+    WASD to fly &middot; Q/E strafe &middot; Space/C up/down &middot; Scroll to zoom &middot; Drag to orbit
+  </div>
+  <div class="fixed top-16 right-4 z-30 flex items-center gap-2">
+    <button id="btn-bookmark" class="btn-glass px-3 py-1.5 rounded-lg text-xs text-white/60 cursor-pointer hover:text-yellow-400" style="display:none">
+      ★ Bookmark
+    </button>
+    <select id="bookmark-select" class="btn-glass px-3 py-1.5 rounded-lg text-xs text-white/60 bg-transparent cursor-pointer appearance-none"
+            style="display:none;background: rgba(10,14,28,0.75); border: 1px solid rgba(255,255,255,0.12);">
+      <option value="" disabled selected>★ Bookmarks</option>
+    </select>
+  </div>
+
+  <!-- ═══════════ SYSTEM NAME LABEL ═══════════ -->
+  <div id="system-name" class="fixed bottom-10 left-1/2 -translate-x-1/2 z-10 text-xs tracking-[0.3em] uppercase text-white/20"></div>
+
+  <!-- ═══════════ BLACK HOLE HINTS ═══════════ -->
+  <div class="fixed bottom-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none text-[10px] text-white/20 tracking-widest" id="bh-hints" style="display:none">
+    WASD to fly &middot; Q/E strafe &middot; Space/C up/down &middot; Scroll to zoom &middot; Drag to orbit
+  </div>
+
+  <!-- ═══════════ PLANET INFO PANEL (right side, shown when focused) ═══════════ -->
+  <div id="planet-panel" class="fixed right-4 top-16 bottom-4 w-72 z-20 fade-panel hidden-panel flex flex-col gap-3 overflow-y-auto pr-1">
+    <!-- Planet header card -->
+    <div class="panel-glass rounded-xl p-4">
+      <div class="flex items-center justify-between mb-2">
+        <h2 id="pp-name" class="text-lg font-medium tracking-wide capitalize text-white/90">Planet</h2>
+        <span id="pp-status" class="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">Colonized</span>
+      </div>
+      <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-white/50">
+        <div>Population</div><div id="pp-pop" class="text-right text-white/80 font-medium">0</div>
+        <div>Style</div><div id="pp-style" class="text-right text-white/70 capitalize">—</div>
+      </div>
+    </div>
+    <!-- Planet yields -->
+    <div class="panel-glass rounded-xl p-4">
+      <h3 class="text-[11px] uppercase tracking-widest text-white/40 mb-2">Base Yields / Day</h3>
+      <div id="pp-yields" class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-white/60">
+      </div>
+    </div>
+    <!-- Buildings -->
+    <div class="panel-glass rounded-xl p-4 flex-1">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-[11px] uppercase tracking-widest text-white/40">Buildings</h3>
+        <span class="text-[10px] text-white/30"><span id="pp-slots-used">0</span>/<span id="pp-slots-max">8</span></span>
+      </div>
+      <div id="pp-buildings" class="flex flex-col gap-1.5 mb-3 text-xs text-white/60">
+        <div class="text-white/30 italic text-[11px]">No buildings yet</div>
+      </div>
+      <div id="pp-build-buttons" class="flex flex-col gap-1.5"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════ FOOTER ═══════════ -->
+  <footer class="fixed bottom-0 left-0 right-0 z-20 pointer-events-none flex justify-center pb-3">
+    <span class="text-[10px] tracking-widest uppercase text-white/15">
+      Endless Horizons &middot; v0.1
+    </span>
+  </footer>
+
+  <script>
+    window.addEventListener("error", function(e) {
+      var d = document.createElement("pre");
+      d.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;background:#c00;color:white;padding:16px;font-size:13px;max-height:40vh;overflow:auto;white-space:pre-wrap;";
+      d.textContent = "ERROR: " + e.message + "\nat " + e.filename + ":" + e.lineno + ":" + e.colno;
+      if (e.error && e.error.stack) d.textContent += "\n\n" + e.error.stack;
+      document.body.appendChild(d);
+    });
+    window.addEventListener("unhandledrejection", function(e) {
+      var d = document.createElement("pre");
+      d.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;background:#c00;color:white;padding:16px;font-size:13px;max-height:40vh;overflow:auto;white-space:pre-wrap;";
+      d.textContent = "MODULE ERROR: " + (e.reason ? (e.reason.message || e.reason) : "Unknown");
+      if (e.reason && e.reason.stack) d.textContent += "\n\n" + e.reason.stack;
+      document.body.appendChild(d);
+    });
+  </script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

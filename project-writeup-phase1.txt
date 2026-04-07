@@ -1,0 +1,510 @@
+﻿================================================================================
+  ENDLESS HORIZONS — PROJECT WRITE-UP: PHASE 1
+  Full Technical & Design Documentation
+================================================================================
+
+Document scope: Everything from the very first prototype through the completion
+of Phase 1 of the game. This is a complete snapshot of the project state as of
+the end of Phase 1 implementation.
+
+
+================================================================================
+  1. PROJECT ORIGINS
+================================================================================
+
+The project began as a pure Three.js experiment: render a single rotating Earth-
+like globe in the browser using procedurally generated continent textures. There
+was no game concept at this stage — only the visual goal of getting a convincing
+3D planet rendered with no external asset files.
+
+The very first version was a sphere with a flat blue MeshStandardMaterial and
+hand-drawn "continents" painted onto a canvas element using noise-based
+threshold sampling. From there, the visuals evolved through several major
+iterations:
+
+  Iteration 1 — Flat threshold noise
+    A single 2D noise pass at low frequency determined land vs. ocean by
+    checking if the sample exceeded 0.5. The result was blocky and symmetric.
+
+  Iteration 2 — Multiple octaves (fBm)
+    Layered several noise octaves at different frequencies and amplitudes
+    (fractal Brownian motion) to produce a more natural, jagged coastline.
+    Still 2D, but much more convincing.
+
+  Iteration 3 — 3D Perlin noise
+    Switched to a full 3D Perlin noise implementation sampled at the (x,y,z)
+    surface coordinate of the sphere. This eliminated the polar seam artifact
+    that all 2D UV-mapped noises produce, because there is no UV wrap at the
+    poles — the noise is continuous in 3D space.
+
+  Iteration 4 — Domain warping
+    Before sampling the noise for land/ocean, the (x,y,z) coordinate is
+    offset by two independent noise samples q(x,y,z) and r(x,y,z). This
+    breaks up the mechanical regularity of Perlin noise and creates much more
+    organic-looking coastlines with peninsulas, bays, and fjord-like features.
+
+  Iteration 5 — Style presets
+    Three named style configs were added:
+      "oceanic"      — high sea level, scattered small islands and archipelagos
+      "continental"  — moderate sea level, large connected landmasses
+      "scattered"    — medium sea level, many medium-sized disconnected islands
+
+  With the texturing approach settled, attention turned to expanding the scene
+  from one planet to a full solar system.
+
+
+================================================================================
+  2. SOLAR SYSTEM SCENE CONSTRUCTION
+================================================================================
+
+2.1 Multiple Planets
+    Three planet configs were added, each initialized with a different style
+    preset, axial tilt, atmosphere color, and surface color palette:
+        Planet 0 — Blue oceanic world  (Earth analog)
+        Planet 1 — Red scattered world (Mars analog, dry palette)
+        Planet 2 — Green continental world (lush, Earth-like but greener)
+
+    Each planet is a Three.js Group containing:
+        - Surface mesh   (SphereGeometry r=1, MeshStandardMaterial, canvas texture)
+        - Atmosphere mesh (SphereGeometry r=1.02, MeshStandardMaterial,
+                           transparent, blending=AdditiveBlending)
+        - Glow ring      (SphereGeometry r=1.08, MeshBasicMaterial, transparent,
+                           blending=AdditiveBlending)
+
+    Axial tilts are applied to the Group so the atmosphere and glow tilt with
+    the surface, which is visually coherent.
+
+2.2 The Sun
+    The sun is not a separate object — it lives in the same planets[] array at
+    index 3 (the last slot). This simplifies the camera focus system because
+    clicking any object, including the sun, goes through the same focusOn() path.
+
+    The sun uses a canvas-painted warm texture (seeded sunspots, radial gradient)
+    on a sphere of radius 2. It is positioned at x = -12 (which is
+    PLANET_SPACING × 3 to the left, giving planets x = 0, 4, 8 and sun x = -12).
+
+    The sun has no atmosphere mesh — it uses a stronger glow ring with orange
+    tinting and AdditiveBlending to simulate the corona.
+
+2.3 Spacing and Layout
+    PLANET_SPACING = 4 units. Planets sit at x = 0, 4, 8 in a horizontal line.
+    The sun is at x = -12. No orbital simulation is implemented — the scene is
+    a static layout rather than a physically accurate solar system. This was a
+    deliberate design choice to keep the camera math simple and the visual
+    composition clear.
+
+2.4 Lighting
+    Four lights create the scene's ambient and dramatic planetary lighting:
+        - AmbientLight:     low-intensity (0.08) warm white — fills black shadows
+        - DirectionalLight: primary "sun" light from x=15,y=10,z=10 — casts the
+                            main bright hemisphere on each planet
+        - HemisphereLight:  sky (0x3399ff, 0.15) + ground (0x221111, 0.1) —
+                            provides subtle color variation in shadowed regions
+        - PointLight:       orange-tinted, positioned near the sun mesh — gives
+                            the sun a believable local illumination at close range
+
+    ACES filmic tone mapping is enabled on the renderer (Three.js ACESFilmicTone
+    MappingExposure at 1.4) for a cinematic color grade.
+
+2.5 Starfield
+    3000 stars are placed on a large SphereGeometry (r=200) as a custom vertex-
+    colored BufferGeometry. Each star gets one of 5 color tints (blue-white,
+    warm white, cool white, pale blue, faint yellow). Stars flicker/twinkle by
+    modulating their opacity each frame using sine curves with per-star offsets.
+
+
+================================================================================
+  3. CAMERA AND NAVIGATION SYSTEM
+================================================================================
+
+3.1 Camera States
+    The camera has two main states:
+        "all"     — system overview: x=-2, y=0.5, z=18 (sees all 4 objects)
+        "focused" — close-up of a single planet: x=0, y=0.5, z=4 (relative to
+                    the target planet's position)
+
+    Transitions use smooth exponential lerp (Three.js Vector3.lerp) over
+    multiple frames. A separate quaternion slerp handles orbital tilt to
+    slightly angle the camera above the equatorial plane when zooming in.
+
+3.2 focusOn / showAll
+    focusOn(planet) sets the camera target, fades the non-focus planets out,
+    and slides the planet panel into view.
+
+    showAll() zooms back to the system overview and fades all planets to full
+    opacity, then hides the planet panel.
+
+    Both were initially implemented as function declarations. During Phase 1
+    game engine integration, they were converted to let variables (assigned
+    arrow functions) so the game engine code could reassign them to phase-gated
+    wrappers. This is required because the "Show All" button's click listener
+    calls showAll via a closure — `() => showAll()` — so the reassignment
+    takes effect automatically at call time.
+
+3.3 Drag-to-Rotate
+    Any planet can be clicked and dragged to rotate it on its own axis.
+    The system tracks:
+        - pointerdown: records the initial X position and sets isDragging=true
+        - pointermove: computes delta X from initial, maps to a rotation rate
+        - pointerup: stops drag, stores final velocity
+
+    After releasing, a velocity consumption system applies angular deceleration
+    (velocity *= 0.95 each frame) so the planet "coasts" to a stop naturally.
+
+    While in dragging mode, the slerp return-to-home rotation is disabled so the
+    planet doesn't fight the drag input.
+
+3.4 Auto-Return
+    When not dragging, the planet slowly slerps its quaternion back toward its
+    resting orientation (defined by axial tilt). This keeps planets looking tidy
+    if the player leaves them after spinning.
+
+
+================================================================================
+  4. PROCEDURAL TEXTURE SYSTEM
+================================================================================
+
+Function: generateContinentTexture(config)
+
+Input config keys:
+    style            "oceanic" | "continental" | "scattered"
+    landColor        RGB hex for land
+    deepSeaColor     RGB hex for deep ocean
+    shallowSeaColor  RGB hex for shallow coastal water
+    sandColor        RGB hex for beach/lowland transition
+    iceColor         RGB hex for polar caps
+    seed             Integer seed for deterministic generation
+
+Output: Three.js CanvasTexture (1024 × 512 pixels)
+
+Algorithm:
+    Step 1 — 3D Perlin noise implementation
+        A pure-JS Perlin noise function using 12 cube-edge gradients, quintic
+        fade (6t^5 - 15t^4 + 10t^3), and trilinear interpolation. A seeded
+        permutation table (256 values, shuffled via a mulberry32 PRNG) ensures
+        different seeds produce different continent shapes.
+
+    Step 2 — Coordinate mapping
+        For each pixel at UV coordinates (u, v):
+            θ = u × 2π   (longitude)
+            φ = v × π    (latitude from 0 to π)
+        Map to sphere surface via standard spherical coordinates:
+            x = sin(φ) × cos(θ)
+            y = cos(φ)
+            z = sin(φ) × sin(θ)
+
+    Step 3 — Domain warping
+        Two independent noise samples q and r are computed at (x,y,z) with
+        a spatial offset. The final continent noise is sampled at the warped
+        position (x+q, y+r, z+q*r), not the original position. This breaks
+        up mechanical regularity and produces organic coastlines.
+
+    Step 4 — fBm (fractal Brownian motion)
+        The main noise sample is the sum of 5 octaves:
+            amplitude *= 0.5 per octave
+            frequency *= 2.0 per octave
+        Summed value is normalized back to [0,1] range.
+
+    Step 5 — Style thresholds
+        Each style preset defines:
+            seaLevel     — the fBm value below which a pixel is ocean
+            sandBand     — thin band just above sea level for beach/sand color
+            iceLatitude  — latitude in radians beyond which ice caps appear
+
+    Step 6 — Pixel painting
+        Each pixel is assigned a color based on:
+            < seaLevel:            deep sea or shallow sea (by depth below threshold)
+            seaLevel to sandBand:  sand/beach color
+            > sandBand:            land color
+            |latitude| > iceLatitude: ice cap color (overrides land)
+
+
+================================================================================
+  5. USER INTERFACE (index.html)
+================================================================================
+
+The HTML file is a flat single-page layout with all panels as fixed-position
+overlays on the Three.js canvas element.
+
+5.1 External Libraries (CDN only, no local files)
+    - Three.js v0.164.0     via unpkg.com (ES module import in main.js)
+    - Tailwind CSS v3       via cdn.tailwindcss.com play script
+    - Google Fonts Inter    for the primary typeface
+
+5.2 UI Sections
+
+    Start Screen (#start-screen)
+        Full-screen overlay visible before the game begins.
+        "Endless Horizons" title in large text.
+        Subtitle: "A Real-Time Space Civilization Builder"
+        Two buttons:
+            "New Game" — clears any save and enters planet selection
+            "Continue" — disabled if no save exists; loads save and enters playing
+        Background: semi-transparent dark glass over the Three.js canvas so the
+        solar system is partially visible behind the title.
+
+    Select Prompt (#select-prompt)
+        Small centered banner shown during the planet selection phase.
+        Text: "Click a planet to found your colony"
+        Animated pulsing green dot to indicate active interaction.
+        Hidden during title and playing phases.
+
+    Top HUD Bar (#hud-top)
+        Fixed to the top of the screen, full width.
+        Left side:   Pause | 1× | 2× | 5× speed buttons
+        Center:      Day NNN / Year NNNN clock (updates every frame tick)
+        Right side:  5 resource icons + value + rate
+                       ⚡ Energy   (yellow)
+                       ⛏ Minerals (gray)
+                       🌿 Food     (green)
+                       🔬 Research (blue)
+                       ⚙ Alloys   (orange)
+                     Population count
+                     Save button (manual)
+        Visible only during the playing phase.
+
+    Planet Panel (#planet-panel)
+        Fixed to the right side of the screen.
+        Appears when a planet is focused during the playing phase.
+        Contains:
+            - Planet name (e.g. "Planet 1") and colonization status
+            - Planet style ("oceanic", "continental", "scattered")
+            - Current population
+            - Base yield table (resources produced per game-day before buildings)
+            - Building list: each built building with current yields and an
+              upgrade placeholder
+            - Construction queue: in-progress buildings with a progress bar
+              (shows days remaining)
+            - Build buttons: one per BUILDING_DEF, disabled if insufficient
+              resources or building already under construction
+
+    System View Button (#show-all-btn)
+        Small fixed button in the top-left.
+        "← System View" label.
+        Appears only when focused on a planet during playing.
+        Clicking calls showAll() to zoom back to system overview.
+
+5.3 Custom CSS Classes
+    .panel-glass     — backdrop-blur, semi-transparent dark bg, rounded border
+    .btn-glass       — flat button, glass bg, hover highlight
+    .fade-panel      — opacity transition for smooth show/hide
+    .hidden-panel    — display:none equivalent used when fully hidden
+
+5.4 Color Conventions
+    The UI uses a consistent dark blue-black palette:
+        Background:   rgba(10,15,30,0.85) — deep space dark
+        Panel bg:     rgba(15,25,50,0.75) — slightly blue-tinted glass
+        Borders:      rgba(100,140,200,0.2) — faint blue rim
+        Text:         #c8d8f0 (most text), #7090c0 (secondary), white (labels)
+        Accent:       Tailwind sky-blue tones for interactive elements
+
+
+================================================================================
+  6. GAME ENGINE (main.js, lines ~750–966)
+================================================================================
+
+6.1 BUILDING_DEFS
+    Constant object map, keyed by internal name. Each entry:
+        label        Display name in UI
+        cost         { energy, minerals, food, research, alloys } upfront cost
+        buildDays    Integer days until construction completes
+        yields       { energy, minerals, food, research, alloys } per game-day
+
+    The 5 buildings:
+        solarArray   Solar Array     — 20 energy/day
+        mine         Mine            — 15 minerals/day
+        farmDome     Farm Dome       — 20 food/day, +200 population cap
+        researchLab  Research Lab    — 15 research/day
+        foundry      Foundry         — 10 alloys/day (requires minerals input — TODO)
+
+6.2 STYLE_YIELDS
+    Base yields that a planet gets simply from being colonized, before any
+    buildings. Varies by planet style:
+        oceanic:      { food:5, minerals:2, energy:2, research:1, alloys:0 }
+        continental:  { food:3, minerals:3, energy:3, research:2, alloys:1 }
+        scattered:    { food:2, minerals:5, energy:2, research:1, alloys:2 }
+
+6.3 gameState Object
+    The single source of truth for all persistent game data:
+        started:  boolean — true once a game is in progress
+        day:      integer 1–360
+        year:     integer starting at 1
+        speed:    0=paused, 1=normal, 2=fast, 5=ultra
+        resources: { energy, minerals, food, research, alloys } — stockpile values
+        planets:  array of per-planet state objects
+            Each planet state:
+                id:           index (matches planetConfigs index)
+                name:         "Planet 0" etc.
+                colonized:    boolean
+                style:        "oceanic" | "continental" | "scattered"
+                population:   integer
+                popCap:       integer (base 500, +200 per farmDome)
+                buildings:    array of { type, level }
+                queue:        array of { type, daysLeft }
+
+6.4 gameTick(dt)
+    Called every animation frame with dt = elapsed time in seconds × speed.
+    Internally converts to game days (dt × TICKS_PER_SECOND).
+
+    Each tick:
+        1. Advance construction queue: subtract days from in-progress buildings,
+           complete them when daysLeft reaches 0 (push to buildings[], remove
+           from queue)
+        2. Accumulate yields: for each colonized planet, add STYLE_YIELDS +
+           sum of all completed building yields to resources
+        3. Population growth: tick a fertility accumulator; when it overflows,
+           +1 population if below popCap and food surplus > 0
+        4. Calendar advance: accumulate fractional days; when a full game-day
+           passes, increment day; when day exceeds 360, reset to 1 and
+           increment year
+        5. Auto-save: every 30 game-days, call saveGame()
+
+6.5 Save / Load
+    saveGame():
+        Serializes gameState to JSON, writes to localStorage key
+        "endlessHorizons_save". Also writes a timestamp to
+        "endlessHorizons_saveTime" (for the Continue button UI).
+
+    loadGame():
+        Reads JSON from localStorage, parses, assigns to gameState.
+        Returns true if successful, false if no save exists.
+
+    clearSave():
+        Deletes both localStorage keys. Called by "New Game" to prevent
+        immediately re-loading a previous save.
+
+6.6 Phase Functions
+    enterTitle():
+        Shows the start screen, hides HUD and planet panel, zeroes speed.
+
+    enterSelecting():
+        Hides start screen, shows the select-prompt banner, remains in showAll
+        camera mode. Overrides focusOn() so clicking a planet calls
+        startColonization(planet) instead of the normal camera zoom.
+
+    enterPlaying():
+        Hides select-prompt, shows HUD and planet panel (if a planet is
+        focused). Restores focusOn() and showAll() to their normal behavior.
+        Sets gameState.started = true. Starts speed at 1×.
+
+    startColonization(planet):
+        Sets the clicked planet as colonized in gameState, saves initial state,
+        then calls enterPlaying().
+
+6.7 HUD Updates
+    updateHUD():
+        Called every frame. Updates:
+            - Day/year text
+            - Each resource value and its per-tick rate (rate is recalculated
+              by summing all yields across all colonized planets)
+            - Population display
+
+    updatePlanetPanel(planet):
+        Called whenever the focused planet changes or the panel needs refresh.
+        Renders the full building list, construction queue with progress bars,
+        and build buttons (with disabled state based on current resources).
+
+
+================================================================================
+  7. FILE INVENTORY
+================================================================================
+
+  File                    Size       Lines   Purpose
+  ----------------------  ---------  ------  -----------------------------------
+  index.html              ~9,611 B   ~180    HTML shell + all UI panels + CSS
+  main.js                 ~40,500 B  966     Three.js scene + full game engine
+  project-writeup.txt     ~12,398 B  —       Earlier generic project overview
+                                             (pre-game; not this document)
+  planned.txt             (new)      —       Full phase roadmap for all phases
+  project-writeup-phase1  (this)     —       This document
+
+
+================================================================================
+  8. ARCHITECTURE DECISIONS
+================================================================================
+
+No build pipeline
+    The project uses plain ES modules with CDN imports. Opening index.html
+    directly in a browser runs the full game. This keeps iteration fast and
+    deployment trivial (any static file host works).
+
+Single main.js
+    All logic — Three.js scene setup, camera, animation, textures, and the
+    game engine — lives in one file. This was a deliberate choice to avoid
+    module bundler complexity while the game concept was being developed. At
+    ~1000 lines it's still manageable. Module splitting is a future option.
+
+gameState as a plain object
+    No reactive framework, no store library. gameState is a vanilla JS object.
+    The HUD is re-rendered by diff-checking DOM text nodes on each frame (or
+    on events). This is fast enough at 60fps for the current data size.
+
+Three.js ES module import
+    three.module.min.js is imported via unpkg CDN as an ES module. This means
+    no global THREE namespace — all Three.js classes are imported by name:
+        import * as THREE from 'three_url';
+
+Camera lerp over requestAnimationFrame
+    Rather than one-shot tween libraries, camera position and quaternion are
+    lerped per-frame toward a target. This integrates naturally with the
+    animation loop and is trivially pausable.
+
+focusOn / showAll as reassignable let variables
+    Critical for Phase 1 game logic. These were converted from function
+    declarations (which are hoisted and cannot be reassigned) to let variables.
+    The game engine overrides focusOn during the selection phase to intercept
+    planet clicks for colonization, then restores normal behavior.
+
+
+================================================================================
+  9. KNOWN LIMITATIONS & TECHNICAL DEBT
+================================================================================
+
+  - The Foundry building lists alloys as a pure yield but in reality should
+    consume minerals to produce alloys. The supply-chain mechanic is noted for
+    Phase 2.
+
+  - Planet panel build buttons do not disable "if a building of this type
+    already exists" — a player can build multiple Solar Arrays, which is
+    technically valid but may eventually need per-building slot limits (Phase 2).
+
+  - Orbital simulation: planets do not orbit the sun. The layout is static.
+    No orbital mechanics are planned unless it becomes a visual priority.
+
+  - No loading indicator for texture generation. On low-end hardware, the
+    initial canvas texture generation for 3 planets (3 × 1024×512 Perlin noise
+    passes) may cause a momentary freeze.
+
+  - The seeded PRNG (mulberry32) is deterministic per seed, but planet seeds
+    are hardcoded in planetConfigs. Randomized seeds are a Phase 2+ feature.
+
+  - The starfield uses per-vertex color instead of a proper sprite-based star
+    system. Star sizes are uniform (1px points). A points material with varied
+    sizes would look better but is a cosmetic future improvement.
+
+  - Error handling in save/load is minimal. localStorage quota exceeded errors
+    are not caught. This is acceptable for the current state size.
+
+
+================================================================================
+  10. WHAT WORKS IN THE BROWSER
+================================================================================
+
+To run the game:
+    1. Open index.html in any modern browser that supports ES modules and
+       WebGL2 (Chrome, Edge, Firefox all work).
+    2. No server required. No npm install. No build step.
+    3. The start screen appears immediately.
+    4. Click "New Game" and then click any planet to found your colony.
+    5. The HUD appears, time starts at 1× speed, and resources begin accruing.
+    6. Click on a planet to view its panel, build buildings, monitor population.
+    7. Click "← System View" to zoom back out.
+    8. Use Pause/1×/2×/5× to control time.
+    9. Game saves automatically every 30 game-days and manually via Save button.
+    10. Refreshing the browser with a save in localStorage will show "Continue"
+        on the start screen.
+
+
+================================================================================
+  End of project-writeup-phase1.txt
+================================================================================

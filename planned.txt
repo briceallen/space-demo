@@ -1,0 +1,324 @@
+﻿================================================================================
+  ENDLESS HORIZONS — DEVELOPMENT PLAN
+  All Phases: 1 through 6+
+================================================================================
+
+This document outlines the full development roadmap for Endless Horizons, a
+browser-based real-time-with-pause civilization builder set in a procedurally
+generated solar system. Inspired by Endless Space, the core fantasy is arriving
+at a new solar system with nothing, building a civilization from scratch on one
+planet, expanding to neighboring worlds, harnessing the sun, and eventually
+reaching other star systems and galaxies.
+
+CORE DESIGN PILLARS
+-------------------
+  - Real-time with pause  (time flows, you pause to queue decisions)
+  - Solo play only (no multiplayer)
+  - Persistent save via browser localStorage (no backend required)
+  - All rendering in Three.js WebGL — no game engine dependencies
+  - Tailwind CSS for all UI panels — clean, dark glass-morphism aesthetic
+  - Procedurally generated planets and solar systems
+  - No combat in the core loop — a builder and explorer game
+
+
+================================================================================
+  PHASE 1 — GAME FOUNDATION  [IMPLEMENTED]
+================================================================================
+
+Goal: Make the visualization feel like a game. Establish all core scaffolding
+that every subsequent phase will build on.
+
+What was built:
+  - Title screen ("Endless Horizons") with New Game and Continue buttons
+  - Planet selection flow: clicking a planet in selection mode founds your colony
+  - Game state object (gameState) holding all persistent data:
+      resources, planet data, buildings, population, day/year, speed
+  - 5 resources: Energy, Minerals, Food, Research Points, Alloys
+  - Per-style base yields: oceanic favors food, scattered favors minerals,
+    continental is balanced
+  - gameTick() function: runs inside the Three.js render loop, respects
+    pause and speed multiplier
+  - Time system: Day 1–360, then Year advances; display in top HUD
+  - Speed controls: Pause / 1x / 2x / 5x
+  - Top HUD bar: time + speed controls, all 5 resource counters with per-tick
+    rate indicators, total population, Save button
+  - Right-side planet panel: planet name, colonized status, style, population,
+    base yields, building list with progress bars, build buttons
+  - 5 buildings: Solar Array, Mine, Farm Dome, Research Lab, Foundry
+      Each has a cost, build time in days, and per-day yield output
+  - Building construction queue: buildings take N days, progress tracked in state
+  - Population: grows slowly over time based on food surplus
+  - Save / Load: full gameState serialized to JSON in localStorage
+  - Auto-save every 30 game-days
+  - Manual save button in HUD
+  - Continue button on title screen if a save exists
+  - 3-phase game flow: title → selecting → playing
+  - All panels use glass-morphism Tailwind styling
+  - "System View" button replaces old "All Planets"
+
+
+================================================================================
+  PHASE 2 — PLANET MANAGEMENT  [PLANNED]
+================================================================================
+
+Goal: Make each planet feel alive and distinct. Deepen the per-planet loop
+with meaningful choices and real consequences to resource decisions.
+
+Planned features:
+  - Planet detail screen: full-screen or large panel when focused on a planet,
+    with a cleaner layout — building grid (8 slots visualized as cards),
+    population breakdown, happiness/morale meter
+  - Building upgrade system: each building can be upgraded 1–2 times at
+    increasing cost, improving yield (e.g. Mine → Advanced Mine → Deep Core Mine)
+  - Specialization bonus: if 3+ buildings of one type on a planet, a
+    "specialization" bonus activates (e.g. 3 Mines = +25% mineral output)
+  - Demolish building: remove a building and recover 50% of its resource cost
+  - Planet morale: affected by food surplus, overcrowding, and building mix.
+    Low morale reduces yields. High morale grants a small bonus.
+  - Population cap: determined by Farm Domes built (each adds 500 pop cap).
+    Without enough food buildings, population declines.
+  - Building prerequisites: some buildings require others first
+      e.g. Foundry requires an existing Mine on the same planet
+  - Resource cap: stockpiles have upper limits unless Storage buildings are built
+  - Storage Depot building: increases resource cap by 500 per depot built
+  - Visual feedback: planet glow color subtly shifts based on colonization status
+    and building activity (e.g. slightly orange tint when under construction)
+  - Notifications: small toast messages for completed buildings, year milestones,
+    population thresholds ("Population reached 1,000!")
+
+
+================================================================================
+  PHASE 3 — TECHNOLOGY TREE  [PLANNED]
+================================================================================
+
+Goal: Add depth and long-term planning via a research system that gates
+expansion, unlocks new buildings, and shapes the player's strategic path.
+
+Planned features:
+  - Research panel: accessible from HUD, shows a 2D tree of technologies
+    arranged in 4 branches
+  - 4 tech branches:
+      Industry    — Better mining, refining, construction speed
+      Biology     — Food efficiency, population growth, terraforming precursors
+      Energy      — Solar arrays, fusion reactors, Dyson tech (late game)
+      Space       — Colony ships, inter-planet logistics, deep space scanning
+  - One active research at a time: player queues one tech, research points
+    accumulate until threshold is met, then it unlocks
+  - Tech effects: each tech modifies game constants (e.g. "Advanced Mining"
+    multiplies Mine yield by 1.4) or unlocks new building types
+  - Tech tree UI: node graph styled with Tailwind — locked nodes dimmed,
+    completed nodes glowing, active node shows progress bar
+  - Prerequisite chains: some techs require others (e.g. Fusion Reactor
+    requires Advanced Solar Arrays; Colony Ships require Space Navigation)
+  - Research overflow: excess points carry over to the next queued tech
+  - Era system: techs grouped into 3 eras (Early, Industrial, Space Age).
+    All Era 1 techs must be completed before Era 2 unlocks.
+  - Starting bonus: player's home planet style influences starting tech:
+      oceanic → +1 Biology research per day from the start
+      scattered → +1 Industry research per day from the start
+      continental → balanced, no bonus
+
+
+================================================================================
+  PHASE 4 — EXPANSION & COLONIZATION  [PLANNED]
+================================================================================
+
+Goal: Make spreading to other planets a meaningful strategic milestone with
+real cost and payoff. Different planets offer different resource profiles,
+making expansion choices consequential.
+
+Planned features:
+  - Spaceport building: must be built on home planet first
+  - Colony ship: once Spaceport is built and Space Navigation tech is researched,
+    player can commission a Colony Ship (high alloy + energy cost, ~30 day build)
+  - Colonization flow: from the system view, click an uncolonized planet →
+    "Send Colony Ship" option appears → costs resources, takes N days to arrive
+    → planet becomes colonized with starting population of 50
+  - Per-planet production independence: each colonized planet manages its own
+    buildings and yields, all flowing into the shared resource pool
+  - Logistics: inter-planet resource transfer (later phase) — for now all
+    planets contribute to one global pool
+  - Colony management: can switch focus between colonized planets, each has
+    its own building queue, population, and yield panel
+  - Planet traits: each procedurally generated planet gets 1–2 random traits
+    (e.g. "Rich Veins" +50% mineral yield, "Dense Atmosphere" -20% solar array
+    efficiency, "Fertile Soil" +30% food yield)
+  - Terraforming precursor: a Biology tech unlock adds a "Terraform" project
+    that takes 180 days and improves a barren planet's food yield cap
+  - Visual indicator: colonized planets get a subtle orbit ring added to their
+    3D mesh in the system view
+  - Population transfer: move colonists between planets (costs food + energy,
+    takes N days)
+
+
+================================================================================
+  PHASE 5 — THE SUN: ENERGY ENDGAME  [PLANNED]
+================================================================================
+
+Goal: Give the player a long-term megaproject to work toward — harnessing the
+sun as the ultimate energy source. This acts as the primary win condition or
+gateway to inter-system travel.
+
+Planned features:
+  - Dyson Collector tech: locked behind Era 3 of the Energy tech branch.
+    Requires Fusion Reactor and Advanced Solar Arrays.
+  - Dyson Collector megaproject: clicking on the Sun in playing mode opens
+    a special "Sun Management" panel (instead of a regular planet panel)
+  - Construction stages: 5 stages, each costing increasing amounts of alloys,
+    energy, and research points, each taking 60–120 game-days
+        Stage 1: Orbital Relay       — +20 Energy/day
+        Stage 2: Solar Collector A   — +50 Energy/day
+        Stage 3: Solar Collector B   — +80 Energy/day
+        Stage 4: Dyson Ring          — +200 Energy/day
+        Stage 5: Dyson Sphere        — +500 Energy/day + unlocks inter-system travel
+  - Visual progression: each Dyson stage adds a visible ring/shell around the
+    sun in the 3D scene (Three.js torus or RingGeometry, semi-transparent)
+  - Sun panel: shows current Dyson stage, next stage cost and progress bar,
+    total solar energy output, and a lore line per stage
+  - When Stage 5 is complete: a "Launch Expedition" button appears — triggers
+    the transition to Phase 6 (inter-system travel)
+  - Sun energy cap: energy can overflow if not enough storage — forces player
+    to build Capacitor Banks (a new endgame building) to use Dyson output
+
+
+================================================================================
+  PHASE 6 — INTER-SYSTEM TRAVEL  [PLANNED]
+================================================================================
+
+Goal: The player's civilization leaves its birth system and discovers a new
+procedurally generated solar system. This is the true mid-game loop of the
+full vision: exploring and colonizing multiple systems.
+
+Planned features:
+  - Star map view: clicking "Launch Expedition" from the Dyson Sphere opens
+    a full-screen galaxy/star-map overlay showing nearby star systems as dots
+    at varying distances
+  - Procedural systems: each star system is generated fresh using the same
+    noise + config system as the current solar system — different planet counts
+    (2–6), different styles and traits, possibly binary star configurations
+  - Expedition ship: a new vessel type that costs massive alloys + energy.
+    Takes real game-time to travel (distance in light-years = travel time)
+  - On arrival: the new system becomes explorable. Player can rotate to the
+    system view of the new system and begin colonization there
+  - Multi-system management: a top-level "Empire" summary panel appears,
+    showing total resources across all systems, total population, and
+    quick-jump buttons to each system
+  - Unique system types:
+      Standard: comparable to home system
+      Resource-rich: abundant minerals, good for industrial buildup
+      Ancient Ruins: bonus Research from scanning planets
+      Neutron Star: high energy from exotic stellar reactors but no habitable
+                    planets — a strategic outpost
+  - Galaxy progression: as more systems are colonized, a "Galactic Influence"
+    score increases — the long-term win metric
+  - System memory: inactive systems still tick (at a reduced simulation rate)
+    so they continue producing resources while the player is elsewhere
+
+
+================================================================================
+  PHASE 6+ — LONG-TERM VISION  [FUTURE IDEAS]
+================================================================================
+
+These are ideas beyond the structured phases, representing the full vision
+of the game if development continues:
+
+  Galaxy Map
+    - Full procedural galaxy with hundreds of star systems
+    - Different galactic regions with unique modifiers
+    - "Anomaly" events discovered during deep space scanning
+    - Ancient civilization ruins providing lore + special tech
+
+  Advanced Economy
+    - Supply chains: buildings that consume one resource to produce another
+      at favorable rates (e.g. Foundry uses minerals to make alloys)
+    - Trade routes between your own systems (automated resource redistribution)
+    - Black market: random events offering resource trades at unusual ratios
+
+  Events System
+    - Random events that fire at intervals: solar flare, asteroid shower,
+      alien signal detected, disease outbreak, scientific breakthrough
+    - Player chooses a response from 2–3 options, each with trade-offs
+
+  Wonders
+    - Unique mega-structures buildable only once per game
+    - Examples: Matrioshka Brain (doubles research output empire-wide),
+      Generation Ship (colonizes a system 2x faster), Stellar Engine
+      (moves your star to a better galactic position)
+
+  Diplomacy (stretch goal)
+    - Alien civilizations encountered in distant systems
+    - Not combat-based: choose to communicate, trade, avoid, or cooperate
+    - Each alien civ has simple behavior patterns and unique tech to trade
+
+  Visual Upgrades
+    - Orbit rings for planets showing colonization status
+    - Expedition ship 3D models traveling between planets in real-time
+    - Particle effects for active buildings (smoke from factories, light from
+      solar arrays)
+    - Day/night terminator line on planet textures using shader
+    - Galaxy background with depth-parallax scrolling
+
+  Mobile / Touch
+    - Touch-drag for planet rotation
+    - Responsive HUD panels for smaller screens
+    - Pinch-to-zoom camera control
+
+
+================================================================================
+  TECHNICAL NOTES FOR ALL PHASES
+================================================================================
+
+Rendering
+  - All phases use the same Three.js v0.164.0 base. No new renderer needed.
+  - New visual elements (orbit rings, Dyson shells, expedition ships) are
+    additional Three.js meshes and groups added to the existing scene.
+  - Shader-based effects (day/night, stellar glow) would use
+    Three.js ShaderMaterial when appropriate.
+
+State Management
+  - gameState JSON object remains the single source of truth throughout.
+  - Each phase extends the schema (new keys added, existing keys never removed
+    to preserve save compatibility).
+  - localStorage save is always a full JSON snapshot of gameState.
+  - Future phases may need save migration (versioned saves with a schema version
+    number in gameState for forward compatibility).
+
+UI
+  - All panels continue as fixed-position Tailwind-styled overlays on the
+    Three.js canvas. No framework needed.
+  - As panels grow more complex, a simple reactive helper (a small function
+    that diffs DOM text vs state and only updates changed nodes) will be added
+    to prevent unnecessary DOM churn at 60fps.
+  - A tech tree panel will likely be the most complex UI element — will use
+    an SVG canvas overlay for drawing dependency lines between nodes.
+
+No Build Step
+  - The project will remain a plain HTML + JS ES module setup with CDN imports
+    for as long as practical. If bundle size becomes a concern in later phases,
+    a minimal Vite setup could be added — but is not planned for Phases 1–5.
+
+Save System
+  - localStorage is sufficient through Phases 1–5 (state stays under 1MB).
+  - Phase 6+ multi-system state may approach 1–2MB. At that point, IndexedDB
+    becomes preferable for reliability and capacity.
+  - No cloud save is planned; the game is intentionally a local experience.
+
+
+================================================================================
+  PHASE SUMMARY TABLE
+================================================================================
+
+  Phase  Status       Description
+  -----  -----------  ---------------------------------------------------
+  1      DONE         Foundation: clock, resources, buildings, save/load
+  2      Planned      Planet management: upgrades, morale, pop cap, traits
+  3      Planned      Tech tree: 4 branches, era gates, research queue
+  4      Planned      Expansion: colonization, colony ships, planet traits
+  5      Planned      Sun endgame: Dyson megaproject, 5-stage construction
+  6      Planned      Inter-system travel: star map, new systems, empire UI
+  6+     Future       Galaxy map, events, wonders, diplomacy, mobile
+
+
+================================================================================
+  End of planned.txt
+================================================================================

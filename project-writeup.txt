@@ -1,0 +1,267 @@
+================================================================================
+  THREE-GLOBE — PROJECT WRITE-UP
+  Solar System Visualization
+  Built with Three.js, WebGL, Perlin Noise, and Tailwind CSS
+================================================================================
+
+OVERVIEW
+--------
+A fully browser-based, interactive 3D solar system visualization built from
+scratch using Three.js (v0.164.0) and plain JavaScript ES modules. No build
+tools, no bundlers — just two files (index.html and main.js) that run directly
+in any modern browser. The scene features a sun and three unique planets, each
+with procedurally generated continent/surface textures, tilted axes, continuous
+rotation, atmospheric glow, and click-to-focus / drag-to-rotate interactivity.
+
+FILES
+-----
+  index.html  — HTML shell, Tailwind CSS via CDN, UI overlays
+  main.js     — All Three.js scene logic (~700 lines)
+
+================================================================================
+TECH STACK
+================================================================================
+
+  Three.js v0.164.0        — 3D rendering, materials, geometry, quaternions
+  WebGL                    — GPU-accelerated rendering via Three.js renderer
+  Tailwind CSS (CDN)       — UI styling (header, button, footer)
+  Vanilla JS (ES modules)  — No framework, no build step
+  HTML Canvas API          — Procedural texture generation (baked at startup)
+
+================================================================================
+SCENE SETUP
+================================================================================
+
+Renderer
+  - WebGLRenderer with antialiasing
+  - ACES Filmic tone mapping (exposure 1.4) for cinematic color response
+  - Pixel ratio matched to device for sharpness on HiDPI screens
+
+Camera
+  - PerspectiveCamera, 60 degree FOV
+  - Overview position: x=-2, y=0.5, z=18  (offset left to frame the wider
+    scene including the sun on the far left)
+  - Smooth lerp to camera target each frame  (LERP_SPEED = 0.045)
+
+Background & Fog
+  - Near-black background: #010108
+  - Exponential fog (density 0.008) for atmospheric depth fade
+
+Lighting — 4 lights
+  - Ambient light    (#90a0c0, intensity 0.7)  — cool blue-white base fill
+  - Key light        (#dde4ff, intensity 1.4)  — top-right-front, primary
+  - Fill light       (#ffeedd, intensity 0.8)  — warm, oscillates on sine wave
+  - Rim light        (#8899cc, intensity 0.7)  — behind planets, edge glow
+
+================================================================================
+PLANETS
+================================================================================
+
+Three planets, evenly spaced 4 units apart, each configured with:
+  - Surface color, emissive color + intensity
+  - Roughness 1.0 / Metalness 0.0  (fully diffuse — zero specular highlight)
+  - Wire color (used as continent tint), glow and atmosphere colors
+  - Axial tilt in X and Z
+  - Noise style for procedural texture generation
+
+  Blue Planet  (x = -4)
+    Surface:     Deep navy  #1c2050
+    Axial tilt:  23.4 deg X,  2 deg Z  (similar to Earth's ~23.5 deg)
+    Style:       "oceanic"  — few large continents, mostly open ocean
+
+  Red Planet   (x = 0)
+    Surface:     Dark crimson  #3d1c22
+    Axial tilt:  25.2 deg X,  -3 deg Z
+    Style:       "scattered"  — many small scattered landmasses / islands
+
+  Green Planet (x = +4)
+    Surface:     Dark forest  #1e3820
+    Axial tilt:  17.8 deg X,  4 deg Z
+    Style:       "continental"  — Earth-like ocean / continent balance
+
+Each planet has three mesh layers in a Group:
+  1. Surface     (radius 1.00, 64x64 seg) — MeshStandardMaterial + texture
+  2. Atmosphere  (radius 1.06) — thin translucent front-face shell
+  3. Outer glow  (radius 1.18) — back-face rendered color halo
+
+================================================================================
+SUN
+================================================================================
+
+The sun uses the same internal data structure as the planets and lives in the
+same planets[] array, so it participates identically in all systems: fade,
+click-to-focus, raycasting, drag-to-rotate, and return-to-home.
+
+  Position:    x = -12  (PLANET_SPACING x 3; double the inter-planet gap)
+  Radius:      2  (twice the planet radius of 1)
+  Surface:     Warm yellow-orange canvas with seeded pixel-level grain
+  Sunspots:    3–5 dark circular patches, random size/position, smooth umbra
+               falloff only (no harsh penumbra ring)
+  Atmosphere:  radius 2.12  (gap 0.12 = 2x planet's 0.06)
+  Glow shell:  radius 2.36  (gap 0.36 = 2x planet's 0.18)
+  Point light: #ffeedd, intensity 2.0, placed at sun world position
+
+Clicking zooms in. Camera moves to CAM_FOCUS_Z x radius = 6.4.
+"← All Planets" returns to the full overview.
+
+================================================================================
+PROCEDURAL TEXTURE ENGINE
+================================================================================
+
+Each planet's surface is a 1024x512 equirectangular canvas baked once at
+startup using true 3D Perlin noise.
+
+--- Why 3D noise on a sphere? ---
+A 2D noise map always produces grid-alignment artifacts at the poles and the
+meridian seam on a sphere. Sampling 3D noise at the sphere's actual 3D surface
+coordinates (x, y, z) means the lattice is never axis-aligned with the surface
+— so no artifacts appear and the texture wraps seamlessly.
+
+--- Seeded PRNG (mulberry32) ---
+All randomness uses a seeded, deterministic PRNG (mulberry32 algorithm) so the
+same planet always generates the same texture. Seeds derive from planet X pos.
+
+--- 3D Gradient Noise (Perlin-style) ---
+  - 256-entry permutation table, seeded and shuffled via Fisher-Yates
+  - 12 gradient directions (unit vectors along cube edges)
+  - Quintic fade: f(t) = 6t^5 - 15t^4 + 10t^3  (zero second derivative at
+    lattice points — no visible seams or derivative discontinuities)
+  - Trilinear interpolation across 8 cube corners
+
+--- Fractional Brownian Motion (fBm) ---
+Multiple octaves of noise summed at doubling frequencies and halving amplitudes
+to produce natural terrain with detail from broad landmasses down to coastlines.
+Octave count is per-style:
+  scattered / continental:  5 octaves  (fine detail, smaller features)
+  oceanic:                  3 octaves  (bolder, larger continent shapes)
+
+--- Domain Warping ---
+The (x, y, z) sample coordinate is displaced by three separate fBm calls before
+the final noise sample, "warping" the domain into irregular organic shapes.
+Warp strength varies per style.
+
+--- Style Presets ---
+  "scattered"    scale=4.0  seaLevel=0.02  warp=0.9   octaves=5
+                 High frequency, low sea level → many small scattered islands
+
+  "continental"  scale=3.0  seaLevel=0.12  warp=1.6   octaves=5
+                 Medium scale, moderate sea level → Earth-like proportions
+
+  "oceanic"      scale=1.5  seaLevel=0.15  warp=2.4   octaves=3
+                 Large features, heavy warp, few octaves → vast oceans with
+                 2–4 large cohesive continents
+
+--- Pole Attenuation ---
+A linear fade multiplier reduces continent density toward the poles to prevent
+pinching artifacts where equirectangular pixels converge.
+
+--- Painting ---
+Ocean = planet base color. Land = blend toward tinted continent color using
+a smoothstep curve around the seaLevel threshold → soft coastline transitions.
+
+================================================================================
+ROTATION & ANIMATION SYSTEM
+================================================================================
+
+Quaternion-based rotation avoids gimbal lock. Each planet stores:
+  homeQuat       — resting orientation from axial tilt
+  rotationQuat   — current orientation applied to Three.js Group each frame
+  spinAngle      — accumulated Y-axis rotation from auto-spin
+
+Auto Spin
+  speed = 0.00105 x (1 + index x 0.25) rad/frame
+  Planet 0 (blue) slowest; index increases toward the sun.
+
+Drag to Rotate
+  When focused, dragging rotates freely on X and Y axes. Velocity consumed
+  per-frame (planet stops when mouse stops). On release, velocity decays with
+  DRAG_DAMPING = 0.90.
+
+Return to Home (Slerp)
+  On "All Planets", displaced planets slerp from current rotationQuat back to
+  homeQuat + spinAngle using an ease-in-out curve over RETURN_SPEED increments.
+
+================================================================================
+CAMERA SYSTEM
+================================================================================
+
+Two vectors lerp toward targets each frame:
+  camCurrent  → camTarget   (position)
+  lookCurrent → lookTarget  (look-at point)
+
+Overview:  position (-2, 0.5, 18), looking at (-2, 0, 0)
+Focus:     position (object.x, 0, 3.2 x radius), looking at (object.x, 0, 0)
+
+Fade System
+  Each object has fade (0–1) lerping toward fadeTarget at 0.06/frame.
+  Non-focused objects fade to 0; below 0.001 the Group is hidden entirely.
+
+================================================================================
+STARFIELD
+================================================================================
+
+3000 stars at random positions on spheres of radius 30–90 units.
+5 color tints: white, cool blue, warm orange, blue-purple, pink.
+Each star has individual twinkle speed; sizes updated per frame via sine wave.
+Rendered as a single THREE.Points draw call (vertex colors, per-point sizes).
+
+================================================================================
+UI & STYLING  (index.html + Tailwind CSS CDN)
+================================================================================
+
+Header (fixed, top-center, pointer-events: none)
+  "SOLAR SYSTEM" — light weight, wide tracking, 70% white
+  Subtitle: "Click a planet to explore · drag to rotate" — 30% white, 10px
+
+Back Button (fixed, left-center, hidden until focused)
+  "← All Planets" — frosted glass: 8% white bg, blur, 15% white border
+  Hover: brightens to 16%, full white text
+  Visibility: JS classList .visible toggle → CSS opacity transition
+
+Footer (fixed, bottom-center, pointer-events: none)
+  "THREE.JS · PERLIN NOISE · WEBGL" — 10px, 20% white
+
+Minimal <style> block kept for:
+  canvas { display: block }          — prevents bottom gap
+  #show-all-btn opacity/transitions  — driven by JS classList
+
+================================================================================
+ARCHITECTURE NOTES
+================================================================================
+
+- No build pipeline. Three.js from unpkg CDN as an ES module.
+  Works by simply opening index.html in a browser (or any local server).
+
+- Sun and planets share one unified planets[] array. All animation loops
+  iterate it, so the sun participates in every system with no special casing.
+
+- Textures baked once at startup on offscreen canvases → THREE.CanvasTexture.
+
+- Fill light oscillates on Y axis via Math.sin each frame for subtle variation.
+
+- Raycasting for clicks uses intersectObject() on each surface mesh.
+  The sun is naturally larger (radius 2) so it's easier to click.
+
+- Window resize handler updates camera aspect and renderer dimensions.
+
+================================================================================
+KNOWN LIMITATIONS / POSSIBLE FUTURE IMPROVEMENTS
+================================================================================
+
+- Textures generated synchronously on main thread at startup. Large sizes
+  (2048x1024+) would stall load. Fix: OffscreenCanvas / Web Worker.
+
+- Planets don't orbit the sun — they stay at fixed X positions.
+
+- Sun texture is simple pixel grain, not fBm. Convection cells / granulation
+  via the 3D noise engine would make it richer.
+
+- No shadow casting — planets don't shadow each other from the sun.
+
+- Stars distributed uniformly; no directional brightness near the sun.
+
+- No explicit touch-drag scroll cancellation for mobile devices.
+
+================================================================================
+  End of write-up
+================================================================================

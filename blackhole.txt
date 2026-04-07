@@ -1,0 +1,430 @@
+================================================================================
+  BLACK HOLE — Detailed Technical Documentation
+  Endless Horizons — Interstellar Gargantua View
+  Last Updated: April 6, 2026
+================================================================================
+
+OVERVIEW
+────────
+The black hole is a third view level ("blackhole") in Endless Horizons, accessed
+via a nav button from the Local Cluster view. It renders a cinematic Gargantua-
+style black hole with a full ray-marched accretion disk, gravitational lensing,
+photon ring, and deep-space background — all in real-time via a full-screen
+GLSL ShaderPass in the Three.js post-processing pipeline.
+
+Visual reference: Double Negative / Kip Thorne's Gargantua from Interstellar.
+
+
+================================================================================
+  FILE STRUCTURE
+================================================================================
+
+blackhole.js (~430 lines):
+  - Physical constants (RS, PHOTON_R, ISCO_R, DISK_INNER, DISK_OUTER, SHADOW_R)
+  - Orbit camera system (bhCam) with spherical coordinates
+  - buildBlackHole(): Event horizon sphere mesh
+  - buildBackground(): Background star particle system
+  - buildWarpedStarfield(): Stars that get gravitationally deflected
+  - initBlackHole(): Setup function called from main.js
+  - showBlackHole() / hideBlackHole(): Visibility toggles
+  - animateBlackHole(): Per-frame camera + effect updates
+
+main.js (ray-march shader + post-processing):
+  - bhLensShader: Full-screen ShaderPass with ray-march fragment shader
+  - UnrealBloomPass: Cinematic glow
+  - Cinematic ShaderPass: Chromatic aberration, vignette, grain, color grading
+  - bhComposer: EffectComposer pipeline chaining all passes
+
+
+================================================================================
+  PHYSICAL CONSTANTS
+================================================================================
+
+  RS          = 6           Schwarzschild radius (event horizon)
+  PHOTON_R    = RS * 1.5    = 9        Photon sphere (unstable circular orbits)
+  ISCO_R      = RS * 3      = 18       Innermost stable circular orbit
+  DISK_INNER  = ISCO_R      = 18       Accretion disk inner edge
+  DISK_OUTER  = RS * 30     = 180      Accretion disk outer edge
+  SHADOW_R    = RS * 2.6    = 15.6     Apparent shadow radius ≈ (3√3/2)M
+
+
+================================================================================
+  RAY-MARCH SHADER (bhLensShader — main.js)
+================================================================================
+
+The heart of the black hole rendering. A full-screen ShaderPass that ray-marches
+every pixel through curved Schwarzschild spacetime.
+
+UNIFORMS:
+  tDiffuse        — Scene texture from previous render pass
+  uTime           — Elapsed time for animation
+  uRS             — Schwarzschild radius
+  uShadowR        — Apparent shadow radius
+  uDiskInner      — Accretion disk inner radius
+  uDiskOuter      — Accretion disk outer radius
+  uCamPos         — Camera world position
+  uFov            — Camera field of view
+  uAspect         — Camera aspect ratio
+  uInvProjMatrix  — Inverse projection matrix
+  uCamMatrix      — Camera world matrix
+
+RAY-MARCH ALGORITHM:
+  - 400 steps maximum, MAX_DIST = 2000
+  - Adaptive step size: max(0.04, dist * 0.02), capped at 3.0
+  - Very fine steps near photon sphere for accurate lensing
+  - Schwarzschild geodesic deflection with GR correction:
+      deflBase = 1.5 * RS / (dist²)
+      grCorrection = 1.0 + 2.2 * RS / dist
+      deflStrength = deflBase * grCorrection
+  - The (1 + 2.2*RS/r) term dramatically increases bending near the photon
+    sphere, producing BOTH over-arc and under-arc visible simultaneously
+
+EVENT HORIZON DETECTION:
+  - Horizon catch at RS * 0.98 (compromise: dark center vs visible arcs)
+  - Rays hitting horizon with no disk → pure black (vec3(0.0))
+  - Rays hitting horizon with disk → disk color only, no background bleed
+
+DISK PLANE CROSSING:
+  - Detected when ray's Y coordinate changes sign (prevY * curY < 0)
+  - Interpolates exact hit position using fractional step
+  - Tracks crossing order (1st, 2nd, 3rd+) for lensed arc handling
+  - 2nd+ crossings slightly attenuated to prevent double-bright overlap
+  - Alpha front-to-back accumulation: min(accum + sample, 1.0)
+
+
+================================================================================
+  ACCRETION DISK (sampleDisk function)
+================================================================================
+
+Called when a ray crosses the y=0 plane within DISK_INNER..DISK_OUTER range.
+
+COORDINATE SYSTEM:
+  - r = length(hitPos.xz)    — radial distance from center
+  - t = (r - inner) / (outer - inner)  — normalized 0..1 radial parameter
+  - angle = atan(hitPos.z, hitPos.x)   — azimuthal angle
+
+COLOR PALETTE (diskColor function):
+  4-stop gradient with smoothstep transitions:
+    inner   = vec3(1.0, 0.95, 0.85)    — hot near-white
+    mid1    = vec3(1.0, 0.88, 0.62)    — bright gold
+    mid2    = vec3(0.98, 0.72, 0.42)   — rich amber
+    outer   = vec3(0.78, 0.50, 0.28)   — deep warm brown
+  Transitions at t = 0.15, 0.45, 1.0 using smoothstep for cinema-quality blends.
+
+RADIAL BRIGHTNESS (radialGlow):
+  - Inner 65%: nearly uniform, 0.90 + 0.10 * (1 - t/0.65)
+  - Outer 35%: gentle dim via pow(x, 0.5) falloff
+  - Ensures bright center without harsh dropoff at edge
+
+KEPLERIAN SHEAR FLOW:
+  - orbSpeed = 1 / (sqrt(r) + 0.5) — inner orbits faster
+  - drift = uTime * orbSpeed * 0.55 — animates disk rotation
+  - Creates differential rotation: inner regions spin faster than outer
+
+TURBULENCE / NOISE (3-layer FBM):
+  - n1: Large-scale features   (sa*3.5 + ca*2.5, r*0.22)  weight 50%
+  - n2: Medium features        (sa*6.0 - ca*4.0, r*0.35)  weight 30%
+  - n3: Fine detail             (sa*10.0 + ca*7.0, r*0.50) weight 20%
+  - All use sin/cos of (angle + drift) for seamless wrap
+  - variation = 0.20 + t * 0.40 — noise has more effect at outer edge
+  - diskDensity = 1.0 - (1.0 - turb) * variation
+
+FILAMENT STRUCTURE (azimuthal + radial):
+  Azimuthal filaments — hair-like flow-aligned structures:
+    fbm(angle * 4.0 + sin(r * 0.3) * 2.0, r * 0.6 + drift * 0.15)
+    Range: 0.78 to 1.0 (22% variation)
+  
+  Radial dust lanes — soft organic dark features:
+    fbm(r * 1.2 + sin(angle * 3.0) * 0.5, angle * 2.0 + drift * 0.2)
+    Range: 0.65 to 1.0 (35% variation, squared for contrast)
+  
+  Combined: 75% azimuthal + 25% radial weighting
+  Final pattern = diskDensity * filaments
+
+DOPPLER BEAMING:
+  - Very subtle: 0.93 + 0.07 * sin(angle + uTime * 0.12)
+  - ±7% brightness variation — nearly invisible, matches film's symmetric look
+
+LENSED ARC HANDLING:
+  - orderFade: 1st crossing = 1.0 brightness, 3rd+ crossing = 0.7
+  - Lensed arcs (wrap over/under shadow) maintained at near-full brightness
+
+FINAL COLOR ASSEMBLY:
+  color = diskColor * radialGlow * doppler * pattern * 0.90 * orderFade
+
+ALPHA / OUTER EDGE (two-stage fade):
+  - innerFade: smoothstep(0.0, 0.08, t) — quick fade-in at inner edge
+  - outerEdge: smoothstep(1.0, 0.92, t) — sharp definition at outer edge
+  - outerFeather: smoothstep(1.0, 0.55, t) — soft gradual glow extending out
+  - outerFade = mix(outerEdge, outerFeather, 0.6) — 60% soft, 40% sharp
+  - midBoost: 12% brightness boost at t = 0.55–0.85 for richer mid-outer
+  - alpha = clamp(innerFade * outerFade * midBoost * 1.3, 0, 1) * orderFade
+
+
+================================================================================
+  PHOTON RING
+================================================================================
+
+Accumulated during ray-march when distance to BH center is between
+SHADOW_R * 0.85 (13.26) and SHADOW_R * 1.15 (17.94).
+
+  ringCenter = SHADOW_R * 1.0     — center of the photon ring zone
+  ringDist = abs(dist - ringCenter)
+  ringSharp = exp(-ringDist² * 25.0)  — ultra-sharp thin line
+  ringGlow  = exp(-ringDist² * 4.0)   — wider warm glow around it
+  photonGlow += (ringSharp * 0.035 + ringGlow * 0.006) * stepSize
+
+Final composite: warm peach-white vec3(1.0, 0.92, 0.82) * photonGlow
+Only added to pixels that are NOT pure shadow (horizon hit with no disk).
+Clamped at 3.0 to prevent overexposure.
+
+
+================================================================================
+  DEEP-SPACE BACKGROUND (galaxyBackground function)
+================================================================================
+
+Procedural background rendered in spherical coordinates so gravitational
+lensing warps it naturally (rays are deflected before sampling background).
+
+MILKY WAY BAND:
+  - Tilted ~15° for visual interest
+  - Band shape: two Gaussians (core σ² = 14, wide σ² = 3)
+  - 3 FBM layers for galactic structure at different scales
+  - Dust lanes: FBM thresholded via smoothstep for dark absorption
+  - Color: warm white core vec3(0.18, 0.16, 0.13) → neutral edges
+
+GALACTIC CENTER:
+  - Bright warm glow at phi ≈ 0, theta ≈ 0
+  - Two overlapping Gaussians for core + corona
+  - Color: warm gold vec3(0.35, 0.25, 0.12)
+
+EMISSION NEBULAE (3 types):
+  - H-alpha (red/pink): very subtle, pow threshold > 0.50
+  - Blue reflection: pow threshold > 0.55
+  - Purple/magenta patches: pow threshold > 0.55
+  - All modulated by bandWide to appear in galactic plane
+
+DARK NEBULAE:
+  - FBM thresholded silhouettes
+  - Multiply sky by (1 - darkPatch * 0.6) for absorption
+
+STAR FIELD (4 layers, Voronoi-based):
+  Uses voronoi cells with per-cell random star placement.
+  Each star has: position hash, presence probability, size, color temperature.
+  
+  Layer 1 (bright foreground): density 0.05, brightness 1.2, with color + diffraction spikes
+  Layer 2 (medium):           density 0.10, brightness 0.6, colored
+  Layer 3 (dim numerous):     density 0.20, brightness 0.22, colored
+  Layer 4 (background dust):  density 0.35, brightness 0.08, white
+  
+  Density boosted 2.5x in Milky Way band.
+  Rare brightest stars (< 3-4% of density threshold) get diffraction spikes.
+  Star colors: blue → blue-white → white → warm yellow → orange giant
+
+
+================================================================================
+  POST-PROCESSING PIPELINE
+================================================================================
+
+Pipeline: RenderPass → bhLensPass → UnrealBloomPass → cinematicPass
+
+1. RenderPass:
+   Renders scene (event horizon sphere, background stars, warped starfield)
+   Clear color: black (0x000000)
+
+2. bhLensPass (ShaderPass — ray-march):
+   Full-screen Schwarzschild geodesic ray-march
+   Composites: accretion disk + background + photon ring + scene objects
+
+3. UnrealBloomPass:
+   strength  = 0.55    — cinematic glow intensity
+   radius    = 0.70    — wide soft spread
+   threshold = 0.35    — catches mid-tones for rich glow
+
+4. cinematicPass (ShaderPass):
+   Chromatic aberration: RGB offset by 0.0025 in screen space
+   Vignette: strength 0.65, smooth falloff from center
+   Film grain: animated noise, strength 0.06
+   S-curve contrast: pow(col, 1.1) type curve
+   Color grading: subtle warm shift, saturation boost
+   Applied as final pass before display
+
+
+================================================================================
+  CAMERA SYSTEM (bhCam — blackhole.js)
+================================================================================
+
+Spherical orbit camera centered on the black hole.
+
+STATE:
+  theta       — azimuthal angle (horizontal orbit)
+  phi         — polar angle (vertical tilt) — clamped [0.1, PI - 0.1]
+  radius      — distance from center — clamped [minRadius, maxRadius]
+  center      — orbit center point (Vector3, starts at origin)
+  isDragging  — mouse drag state
+  prevX/prevY — previous mouse position for drag delta
+
+LIMITS:
+  minRadius = RS * 2.5 = 15      — can't enter event horizon
+  maxRadius = 5000                — can fly very far out
+  phi: 0.1 to PI - 0.1           — prevents gimbal lock at poles
+
+POSITION CALCULATION (getBHCameraPosition):
+  x = center.x + radius * sin(phi) * cos(theta)
+  y = center.y + radius * cos(phi)
+  z = center.z + radius * sin(phi) * sin(theta)
+
+CONTROLS:
+  Mouse drag    — Orbit: adjusts theta/phi via GALAXY_ORBIT_SENSITIVITY (0.005)
+  Scroll wheel  — Zoom: deltaY * 0.05 on radius
+  W/S           — Fly forward/backward (along camera-to-center direction)
+  A/D (or Q/E)  — Strafe left/right
+  Space / C     — Fly up / down
+  R             — Pitch camera down (increases phi)
+  F             — Pitch camera up (decreases phi)
+  Escape / RMB  — Exit black hole view
+
+Fly speed scales with radius: dt * radius * 0.4 (faster when zoomed out).
+
+Camera far plane: 50,000 (supports extreme zoom distances).
+Camera always looks at bhCam.center with up = (0, 1, 0).
+
+
+================================================================================
+  SCENE OBJECTS (blackhole.js)
+================================================================================
+
+EVENT HORIZON SPHERE:
+  - SphereGeometry(RS, 64, 64) — exactly Schwarzschild radius
+  - MeshBasicMaterial: pure black, side BackSide
+  - Ensures anything inside horizon renders as black
+
+BACKGROUND STARS (bhBgStars):
+  - Points mesh with ~3000 random stars in large sphere
+  - Circular point sprite texture (radial gradient canvas)
+  - Follows camera position so it's always surrounding viewer
+  - Provides base star field before ray-march background adds more
+
+WARPED STARFIELD (warpedStarfield):
+  - Stars positioned in mid-range (50-150 units from center)
+  - Original positions stored in warpedStarOrigPos
+  - Animated: positions deflected toward BH based on proximity
+  - Creates visible gravitational lensing of nearby stars
+  - Stars closest to BH get pulled inward most
+
+
+================================================================================
+  ANIMATION (animateBlackHole — blackhole.js)
+================================================================================
+
+Called every frame when viewLevel === "blackhole".
+
+Per-frame updates:
+  1. WASD/QE/Space/C fly controls → move bhCam.center
+  2. R/F pitch tilt → adjust bhCam.phi
+  3. Calculate camera position from spherical coords
+  4. Set camera.position, camera.up, camera.lookAt
+  5. Move background stars to follow camera
+  6. Update warped starfield positions (gravitational deflection)
+
+Main.js then updates ray-march uniforms (uTime, uCamPos, uAspect, uFov,
+uInvProjMatrix, uCamMatrix, cinematicPass time) and calls bhComposer.render().
+
+
+================================================================================
+  DEVELOPMENT HISTORY (Chronological)
+================================================================================
+
+Initial implementation:
+  - Ray-marched Schwarzschild black hole with basic accretion disk
+  - Simple noise-based disk texture, basic color gradient
+  - Single bloom pass, simple camera
+
+Iterative refinement — disk appearance:
+  - Researched Gargantua reference (Wikipedia, DNEG/Wired articles, Kip Thorne papers)
+  - Multiple rounds tuning brightness uniformity around center
+  - Removed concentric ring artifacts — switched to pure FBM noise
+  - Tuned horizon catch radius (0.92 → 1.05 → 0.92 → 0.98) balancing:
+    - Larger = darker center but eats upper lensed arc
+    - Smaller = more arc visible but glow leaks into shadow
+  - Photon ring bounded to SHADOW_R * 0.85–1.15 to prevent glow inside shadow
+  - Disk widened from RS*22 → RS*26 → RS*30 = 180 units
+  - Disk made fully opaque (removed alpha dampening factors)
+  - Background bleed eliminated for horizon-hit rays
+
+Iterative refinement — texture detail:
+  - Tried blunt streak layers → too uniform
+  - Tried sharp dark gap lines with smoothstep threshold → too harsh/ugly
+  - Settled on separated azimuthal filaments + radial dust lanes
+  - Azimuthal: hair-like flow-aligned (angle-based FBM)
+  - Radial: soft organic lanes (radius-based FBM, squared for contrast)
+  - 75% azimuthal / 25% radial weighting for natural look
+
+Iterative refinement — color:
+  - Started with simple 2-stop linear gradient
+  - Upgraded to 4-stop with smoothstep transitions
+  - Colors: hot white → bright gold → rich amber → deep warm brown
+  - Much richer cinematic appearance
+
+Iterative refinement — outer fade:
+  - Single smoothstep was too abrupt
+  - Switched to two-stage: sharp edge + soft feather, mixed 40/60
+  - Added mid-outer brightness boost (12% at t = 0.55–0.85)
+
+Iterative refinement — bloom:
+  - Started at strength 1.3 (way too much bloom wash)
+  - Through many iterations: 1.3 → 0.8 → 0.55 → 0.50 → 0.45 → 0.55
+  - Threshold: 0.12 → 0.55 → 0.45 → 0.50 → 0.35
+  - Current: 0.55 str / 0.70 rad / 0.35 thresh — catches mid-tones
+
+Camera improvements:
+  - Extended far plane 1000 → 50,000
+  - Extended max zoom radius 500 → 5,000
+  - Extended ray-march MAX_DIST 420 → 2,000
+  - Added R/F pitch controls
+  - Disk no longer disappears when zoomed far out
+
+
+================================================================================
+  KNOWN ISSUES & TUNING NOTES
+================================================================================
+
+Delicate balance — horizon radius vs arc visibility:
+  The horizon catch at RS * 0.98 is a compromise. Larger values make the center
+  darker but eat the upper lensed arc. Smaller values show more arc but can
+  allow subtle glow to leak into the shadow. Current 0.98 is a good middle ground.
+
+Bloom sensitivity:
+  Threshold of 0.35 catches the orange mid-tones nicely but can wash out detail
+  if the disk base brightness is too high. The 0.90 multiplier on final color
+  keeps this balanced.
+
+Performance:
+  400 ray-march steps per pixel is heavy. The adaptive step size (0.04 near
+  photon sphere, up to 3.0 far away) helps significantly. On low-end GPUs,
+  reducing MAX_STEPS to 200-300 or increasing minimum step size would help.
+
+FBM cost:
+  The sampleDisk function calls fbm() 5 times per disk crossing (3 turbulence
+  layers + 2 filament layers). Each fbm = 5 noise octaves. At 2 crossings
+  per ray, that's ~50 noise evaluations per pixel. Could be optimized with
+  texture-based noise lookup.
+
+
+================================================================================
+  QUICK REFERENCE — KEY SHADER LINES IN main.js
+================================================================================
+
+  ~55-75:     Shader uniforms definition
+  ~90-110:    Noise/FBM functions
+  ~115-125:   diskColor() — 4-stop palette
+  ~126-185:   sampleDisk() — full disk shading
+  ~190-340:   galaxyBackground() — deep-space procedural background
+  ~345-470:   main() fragment — ray-march + composite
+  ~490-500:   UnrealBloomPass setup
+  ~505-580:   Cinematic post-processing ShaderPass
+  ~1240-1260: Black hole render loop (uniform updates + bhComposer.render)
+
+================================================================================
+  END OF BLACK HOLE DOCUMENTATION
+================================================================================

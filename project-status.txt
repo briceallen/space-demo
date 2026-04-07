@@ -1,0 +1,488 @@
+================================================================================
+  ENDLESS HORIZONS — Full Project Status & Context Document
+  Generated: April 6, 2026
+================================================================================
+
+PROJECT OVERVIEW
+────────────────
+"Endless Horizons" is a civilization builder game inspired by Endless Space,
+built entirely with Three.js (v0.164.0), Tailwind CSS, and vanilla ES modules.
+No build pipeline — served via npx serve or python -m http.server.
+
+Location: c:\Users\Brice\Desktop\three-globe\
+Files:
+  - index.html       (329 lines)  — UI structure, CSS, error handlers
+  - main.js          (1937 lines) — All game logic, rendering, state
+  - blackhole.js     (~430 lines) — Black hole scene, camera, starfield, particles
+  - main.backup.js                — Previous backup
+  - next-steps.txt                — Earlier planning notes
+  - planned.txt                   — Earlier planning notes
+  - project-writeup-phase1.txt    — Phase 1 docs
+  - project-writeup.txt           — General docs
+  - blackhole.txt                 — Detailed black hole documentation
+
+Tech stack:
+  - Three.js v0.164.0 via unpkg CDN (ES module import)
+  - Tailwind CSS via CDN play script
+  - Google Fonts: Inter (300-600 weights)
+  - No build tools, no bundler, no framework
+
+
+================================================================================
+  MAIN.JS — COMPLETE SECTION MAP (1937 lines)
+================================================================================
+
+Lines 1-60: SCENE / CAMERA / RENDERER SETUP
+  - PerspectiveCamera: FOV 60, near 0.1, far 50000
+  - WebGLRenderer: antialias, ACES Filmic tone mapping, exposure 1.4
+  - Scene: background 0x010108, FogExp2(0x010108, 0.008)
+  - Post-processing: EffectComposer with bhLensPass (ray-march), UnrealBloomPass, cinematic ShaderPass
+
+Lines 61-99: LIGHTING
+  - AmbientLight(0x90a0c0, 0.7)
+  - 3x PointLight (warm overhead, fill, cool)
+  
+Lines 100-135: CONSTANTS & PLANET STYLE YIELDS
+  - DEG = Math.PI/180
+  - PLANET_SPACING = 4
+  - STYLE_YIELDS = { oceanic, scattered, continental } with per-day rates
+  - Yield keys: energy, minerals, food, research, alloys
+
+Lines 136-170: PRNG & HASHING
+  - mulberry32(a): 32-bit seeded PRNG returning 0-1 floats
+  - hashCoords(seed, x, y, z): Deterministic spatial hash
+
+Lines 171-205: STAR NAME GENERATOR
+  - generateStarName(seed): Syllable-based procedural names
+  - Consonant/vowel tables, 2-4 syllable construction
+
+Lines 206-475: CONTINENT TEXTURE GENERATION
+  - generateContinentTexture(seed, w=1024, h=512, style)
+  - 3D Perlin noise (permutation table, fade, lerp, grad)
+  - fBm (fractal Brownian motion) with 6 octaves
+  - Domain warping for organic coastlines
+  - 3 planet styles with distinct color palettes:
+    - "oceanic": Deep blues, green islands, white clouds
+    - "scattered": Red/brown terrain, yellow desert
+    - "continental": Green/brown landmasses, blue oceans
+  - Returns Canvas element as texture source
+
+Lines 476-515: SUN TEXTURE GENERATION
+  - generateSunTexture(seed, baseR, baseG, baseB)
+  - 512×256 canvas, grain noise + sunspot patterns
+  - Parameterized by spectral type colors
+
+Lines 516-552: SPECTRAL TYPES
+  - SPECTRAL_TYPES array of 6 entries:
+    M: Red dwarf     (weight 60, color 0xff6a4d, size 0.7)
+    K: Orange         (weight 15, color 0xffa94d, size 0.85)
+    G: Yellow (Sol)   (weight 12, color 0xfff4e0, size 1.0)
+    F: Yellow-white   (weight 7,  color 0xf8f8ff, size 1.15)
+    A: White          (weight 4,  color 0xcad8ff, size 1.3)
+    OB: Blue giant    (weight 2,  color 0x7aa3ff, size 1.6)
+  - Each has: color, sunR/G/B, glowColor, atmosColor, sizeMultiplier, lightColor
+  - pickSpectralType(rng): Weighted random selection
+
+Lines 553-610: STAR SYSTEM BUILDER
+  - buildStarSystem(seed): Creates entire star system from seed
+  - Shared geometries: sphereGeo(1,64,64), glowGeo(1.15,32,32), atmosGeo(1.03,64,64)
+  - Generates 2-5 planets from deterministic RNG
+  - PLANET_PALETTES: 5 preset style arrays
+  - Each planet: surface mesh + atmosphere + glow + orbital tilt
+  - Sun: textured sphere + point light colored by spectral type
+  - Returns { group, sunLight, planets, configs, spectral }
+
+Lines 611-672: SYSTEM LIFECYCLE
+  - let focusedPlanet = null  (declared here to avoid TDZ)
+  - teardownStarSystem(): Disposes all geometries/materials/textures
+  - loadStarSystem(seed): Tears down old, builds new, adds to scene
+  - let systemGroup, systemSunLight, planets (module-level refs)
+  - Initial load: loadStarSystem(0) — seed 0 = home system "Sol"
+
+Lines 673-755: TWINKLING STARFIELD
+  - STAR_COUNT = 3000 background stars
+  - Random positions in 200-unit sphere
+  - Per-star base alpha, twinkle speed, base size
+  - Points mesh with vertex colors (warm tints)
+  - Animated in render loop: alpha oscillation + size pulse
+
+Lines 756-900: LOCAL CLUSTER VIEW (formerly "Galaxy View")
+  - GALAXY_MASTER_SEED = 0x6A1A5E
+  - GALAXY_CELL_SIZE = 10
+  - GALAXY_VIEW_RADIUS = 80
+  - STAR_PROBABILITY = 0.03 (~3% of cells have a star)
+  - ~65-80 stars visible at any time
+  
+  State variables:
+    galaxyStarCache: Map("ix,iy,iz" → star data)
+    clusterGroup: THREE.Group holding all star meshes
+    clusterStarMeshes[]: Array of { mesh, glowMesh, bloomMesh, flareSprite,
+                          star, coreMat, glowMat, bloomMat, flareMat, baseSize }
+    hoveredStar, hoveredStarMesh: Current hover state
+    mouseNDC: THREE.Vector2 for raycasting
+    lastMouseX, lastMouseY: Pixel coordinates for tooltip
+    clusterHoverRing: White ring that follows hovered star
+    clusterCurrentRing: Gold pulsing ring on current system
+    lastVisitedStar: { seed, pos, name, color } of previous system
+    lastVisitedMesh, lastVisitedGlow: Meshes for out-of-range last star
+    trailLine: THREE.Line (red) between current and last-visited
+    wasdKeys: { w, a, s, d, q, e } boolean key state
+    flareTexture: Procedural radial gradient CanvasTexture for sprites
+
+  Shared geometries:
+    clusterStarGeo: SphereGeometry(1, 24, 24)
+    clusterGlowGeo: SphereGeometry(1, 16, 16)
+
+  Per-star rendering (4 layers):
+    1. Core orb (0.35 * sizeMultiplier): MeshStandardMaterial
+       - emissiveIntensity 2.2, roughness 0.05, color lerped white 30%
+    2. Inner glow (3.2x): MeshBasicMaterial, BackSide, opacity 0.22
+    3. Outer bloom (6.0x): MeshBasicMaterial, BackSide, opacity 0.06
+    4. Lens flare sprite (8.0x): SpriteMaterial, additive blending, opacity 0.35
+
+  Functions:
+    generateGalaxyStars(centerPos): Scans grid cells, caches star data
+    rebuildClusterMeshes(centerPos): Creates all meshes + rings + trail
+
+  Home star "Sol" hardcoded at cache key "0,0,0_home" (seed 0, G-type)
+
+Lines 901-1100: VIEW / CAMERA STATE
+  - viewLevel: "system" | "galaxy"
+  - Camera constants: CAM_ALL, CAM_FOCUS_Z, LERP_SPEED, FADE_SPEED, RETURN_SPEED
+  - camTarget, lookTarget, camCurrent, lookCurrent: Vector3 lerp targets
+  - focusOn(planet): Zoom to planet, fade others, show system UI
+  - showAll(): Reset to overview, show galaxy button
+  - galaxyCam object:
+    theta, phi, radius (spherical coords)
+    center: Vector3 (orbit center point)
+    minRadius: 10, maxRadius: 120
+    isDragging, prevX, prevY
+  - getGalaxyCameraPosition(): Converts spherical → cartesian
+  - enterGalaxyView(): Hides system, shows cluster, sets orbit cam
+    Shows: galaxy-label, btn-bookmark, bookmark-select, btn-cluster-center, cluster-hints
+  - exitGalaxyView(seed, pos, name): Hides cluster, loads system
+    Tracks lastVisitedStar if changing systems
+    Hides all cluster UI elements
+
+Lines 1101-1130: BUTTON HANDLERS
+  - galaxyViewBtn click → enterGalaxyView()
+  - btn-cluster-center click → snap galaxyCam.center to currentStarPos
+
+Lines 1131-1200: DRAG / INPUT SYSTEM
+  - dragState: { isDragging, startX/Y, prevX/Y, velocityX/Y }
+  - DRAG_SENSITIVITY = 0.005, DRAG_DAMPING = 0.90
+  - GALAXY_ORBIT_SENSITIVITY = 0.005
+
+  Event handlers:
+    pointerdown: Start galaxy orbit drag OR planet drag
+    pointermove: Track mouseNDC always; galaxy orbit drag; planet rotation drag
+    pointerup: Galaxy click (if hoveredStar → exitGalaxyView) OR planet raycast click
+    wheel: Galaxy zoom (deltaY * 0.05, clamped 10-120)
+    resize: Update camera aspect + renderer size
+    keydown: Escape (exit galaxy/unfocus), WASD/Q/E key tracking
+    keyup: WASD/Q/E key release
+    contextmenu: Right-click = Escape equivalent
+
+Lines 1200-1510: ANIMATION LOOP
+  - clock = new THREE.Clock()
+  - animate() with requestAnimationFrame
+
+  Galaxy branch (viewLevel === "galaxy"):
+    1. WASD flying: Move galaxyCam.center along camera-relative axes
+       Speed = dt * radius * 0.5 (scales with zoom)
+    2. Orbit camera: position from getGalaxyCameraPosition()
+    3. Current ring: lookAt camera, pulse opacity sin(t*3)
+    4. Hover ring: lookAt camera, pulse opacity sin(t*5), scale pulse sin(t*4)
+    5. Trail line: pulse opacity sin(t*2)
+    6. Star breathing:
+       Glow: 0.18 + 0.1*sin(t*1.5 + phase)
+       Bloom: 0.04 + 0.03*sin(t*0.8 + phase*2)
+       Flare: (0.25 + 0.15*sin(t*2.0 + phase*3)) * sizeMultiplier
+    7. Hover raycasting (when not dragging):
+       Raycast mouseNDC against all core meshes
+       Highlight: scale 1.4x, emissive 3.0, show ring + tooltip
+       Unhighlight: restore scale + emissive 1.5
+    8. Tooltip positioning: follows mouse + 16px right, -10px up
+
+  System branch:
+    1. Per-planet fade lerp (FADE_SPEED)
+    2. Auto-rotation (AUTO_ROTATE_SPEED * (1 + i*0.25))
+    3. Drag rotation (quaternion-based)
+    4. Return animation (slerp back to neutral)
+    5. Axial tilt application
+    6. Background star twinkle (sine-based alpha + size)
+    7. Camera position/look lerp (LERP_SPEED)
+    8. Game tick (if playing, every 1.0 seconds)
+    9. HUD update
+
+Lines 1511-1600: GAME STATE & BUILDINGS
+  - BUILDING_DEFS: 5 building types
+    Solar Array:  cost 30 minerals, 10 days, yields +4 energy
+    Mine:         cost 20 energy, 8 days, yields +3 minerals
+    Farm Dome:    cost 15 energy + 10 minerals, 6 days, yields +4 food
+    Research Lab:  cost 25 energy + 20 minerals, 14 days, yields +3 research
+    Foundry:      cost 30 energy + 40 minerals, 18 days, yields +2 alloys -1 minerals
+  - newGameState(homePlanetName): Creates fresh state
+    Resources: 0 energy, 50 minerals, 50 food, 0 research, 0 alloys
+    Home planet: 100 pop, colonized
+    Day 1, Year 1, speed 1
+  - MAX_SLOTS = 8 per planet
+
+Lines 1600-1640: SAVE / LOAD
+  - SAVE_KEY = "endless-horizons-save"
+  - saveGame(): JSON.stringify to localStorage
+  - loadGame(): JSON.parse, returns null if missing
+  - exportSave(): Base64 to clipboard
+  - importSave(): Prompt for Base64, decode, save, reload page
+
+Lines 1640-1700: DOM REFERENCES & GAME PHASE
+  - gamePhase = "playing" (no more title/select screens)
+  - $planetPanel, $ppName, $ppStatus, $ppPop, etc.
+  - enterPlaying(): Show HUD, show galaxyViewBtn, update dropdown
+
+Lines 1700-1800: GAME TICK & HUD
+  - gameTick():
+    1. Increment day (360 days = 1 year)
+    2. For each colonized planet: sum base yields + building yields
+    3. Apply all rates to resources (clamp >= 0)
+    4. Population growth: (food_surplus/10) + 1 per 5 days
+    5. Auto-save every 30 days
+  - updateHUD(): Write resource values + rates + day/year to DOM
+  - updatePlanetPanel(planet3d): Show planet details + build buttons
+    Build buttons: check cost affordability, show progress bars
+
+Lines 1800-1860: BOOKMARKS
+  - addBookmark(): Push {seed, pos, name} to gameState.bookmarks
+  - updateBookmarkDropdown(): Rebuild <select> options, mark home with ★
+  - navigateToBookmark(seed): Find bookmark, exitGalaxyView to it
+
+Lines 1860-1937: BOOT SEQUENCE
+  - Try loadGame() with field patching for old saves:
+    Patches: bookmarks[], currentStarName, currentStarPos, currentSystemSeed, homeSystemSeed
+  - If save exists: restore state, load correct star system
+  - If no save: generate random system, create new game state
+  - Call enterPlaying(), set system name label
+  - Start animate() loop
+
+
+================================================================================
+  INDEX.HTML — COMPLETE UI STRUCTURE
+================================================================================
+
+DOCTYPE html, lang="en"
+
+HEAD:
+  - Tailwind CSS CDN (play script with Inter font config)
+  - Google Fonts: Inter 300-600
+
+CUSTOM CSS:
+  - .panel-glass: rgba(10,14,28,0.75), border 1px white/0.08, backdrop-filter blur(12px)
+  - .btn-glass: rgba(255,255,255,0.06), border white/0.12, blur 8px, transitions
+  - .btn-glass:hover: brighter background/border
+  - .fade-panel / .hidden-panel: opacity/transform transition (0.35s)
+  - #show-all-btn, #galaxy-view-btn: Start hidden (opacity 0), .visible class shows
+  - .resource-pip: min-width 90px
+  - #bookmark-select option: dark background
+
+BODY ELEMENTS (top to bottom):
+
+  #hud-top (fade-panel hidden-panel):
+    Top bar, panel-glass, flex justify-between
+    Left: Pause/Play buttons, Day/Year display
+    Center: 5 resource pips (energy/minerals/food/research/alloys) with rates
+    Right: Population, Save/Export/Import buttons
+
+  #show-all-btn: "← System View" (fixed left, vertical center)
+  #galaxy-view-btn: "🌌 Local Cluster" (fixed left, below show-all)
+
+  #galaxy-label: "Current: Sol" (fixed top-left, hidden by default)
+  #cluster-tooltip: Hover star name (fixed, z-50, pointer-events-none)
+  #btn-cluster-center: "⊕ Center" (fixed top-center, hidden)
+  #cluster-hints: "WASD to fly · Q/E up/down · Scroll to zoom · Drag to orbit"
+    (fixed bottom-center, pointer-events-none, hidden)
+
+  Bookmark area (fixed top-right):
+    #btn-bookmark: "★ Bookmark"
+    #bookmark-select: Dropdown
+
+  #system-name: Bottom center, tracking-wide, faint white
+
+  #planet-panel (fixed right, fade-panel hidden-panel):
+    Planet header: Name, status badge (Colonized)
+    Stats: Population, Style
+    Yields section: Base yields per day
+    Buildings section: Built list + build buttons, slots counter
+
+  Footer: "Endless Horizons · v0.1" (pointer-events-none)
+
+  Error handlers (inline <script> before module):
+    window.error → red overlay with stack trace
+    window.unhandledrejection → red overlay with reason
+
+  <script type="module" src="main.js">
+
+
+================================================================================
+  DEVELOPMENT HISTORY (Chronological)
+================================================================================
+
+Phase 0: Solar system visualization
+  - Three.js scene with sun + planets orbiting
+  - Drag-to-rotate planets, axial tilts
+  - Procedural continent textures (Perlin noise)
+  - Twinkling starfield background
+  - ACES tone mapping, glass-morphism UI
+
+Phase 1: Game engine
+  - Building system (5 types with costs/yields)
+  - Resource management (5 resources)
+  - Population growth tied to food surplus
+  - Save/load to localStorage
+  - Export/import saves (Base64 clipboard)
+  - HUD with resource rates
+  - Planet info panel with build buttons
+  - Game tick at 1 tick/second
+
+Galaxy/Cluster system:
+  - Procedural galaxy generation via grid + hash
+  - ~200 cached stars, ~70 visible at any time
+  - 6 spectral types (M/K/G/F/A/OB) with weighted distribution
+  - Star name generation (syllable-based)
+  - Orbit camera with drag rotation + scroll zoom
+  - Bookmark system for saving locations
+
+Recent session work:
+  - Renamed "Galaxy View" → "Local Cluster"
+  - Replaced pixel Points mesh with 4-layer 3D star orbs:
+    Core orb + inner glow + outer bloom + additive lens flare sprite
+  - Added hover highlighting (scale up, emissive boost, ring, tooltip)
+  - Added WASD + Q/E camera flying (speed scales with zoom)
+  - Added "⊕ Center" button to snap camera back
+  - Added last-visited star tracking with red trail line
+  - Last-visited star rendered even if outside cluster radius (clickable)
+  - Control hints shown at bottom of cluster view
+
+Black Hole view (major feature):
+  - Full ray-marched Gargantua-style black hole as a third view level
+  - blackhole.js: Scene objects, orbit camera, background stars, warped starfield
+  - main.js: Full-screen ray-march ShaderPass with Schwarzschild geodesic integration
+  - 400-step adaptive ray-march with GR correction (1 + 2.2*RS/r)
+  - Accretion disk: 5-octave FBM turbulence + azimuthal filaments + radial dust lanes
+  - Cinematic 4-stop color palette (hot white → bright gold → rich amber → deep brown)
+  - Photon ring with warm peach-white glow at shadow boundary
+  - Gravitational lensing of both disk arcs (over and under shadow)
+  - Deep-space background: Milky Way band, emission/reflection nebulae, Voronoi star layers
+  - Post-processing: UnrealBloomPass (0.55/0.70/0.35) + cinematic pass
+  - Cinematic pass: chromatic aberration, S-curve contrast, film grain, color grading, vignette
+  - Camera: spherical orbit with drag rotation, scroll zoom (max 5000 radius)
+  - Controls: WASD fly, Q/E strafe, R/F pitch tilt, Space/C vertical, mouse orbit
+  - Camera far plane extended to 50,000 for far zoom
+  - Ray-march MAX_DIST = 2000 for rendering at distance
+
+Bugs fixed during development:
+  - Tailwind hidden/flex class conflict → switched to style.display
+  - Title screen removed (game boots directly)
+  - Old saves missing fields → patching on load (bookmarks, star data)
+  - Temporal dead zone: moved focusedPlanet declaration before teardown
+  - Module error visibility: error/unhandledrejection red overlay handlers
+
+
+================================================================================
+  KNOWN STATE & REMAINING WORK
+================================================================================
+
+Current working features:
+  ✅ Full procedural star system generation from seed
+  ✅ 6 spectral type stars with unique visuals
+  ✅ Planet textures (oceanic, scattered, continental)
+  ✅ Drag-to-rotate planets
+  ✅ Local Cluster view with 3D star orbs + lens flares
+  ✅ WASD/Q/E camera flying in cluster
+  ✅ Center button in cluster view
+  ✅ Hover highlighting with tooltip + ring
+  ✅ Last-visited star + red trail between systems
+  ✅ Click star to travel to system
+  ✅ Bookmark system
+  ✅ 5-resource economy with rates
+  ✅ 5 building types with construction time
+  ✅ Population growth from food surplus
+  ✅ Save/load to localStorage
+  ✅ Export/import saves via Base64
+  ✅ Auto-save every 30 in-game days
+  ✅ Escape/right-click to go back levels
+  ✅ Black Hole view with ray-marched Gargantua accretion disk
+  ✅ Gravitational lensing (Schwarzschild geodesics)
+  ✅ Cinematic post-processing (bloom + chromatic aberration + vignette + grain)
+  ✅ Deep-space procedural background (Milky Way + nebulae + Voronoi stars)
+  ✅ Photon ring at shadow boundary
+  ✅ R/F camera pitch tilt in black hole view
+  ✅ Extended camera distance (far plane 50,000, zoom up to 5,000 radius)
+
+Potential future work:
+  - Research tree / tech unlocks
+  - Ship building + fleet management
+  - Inter-system trade routes
+  - Diplomacy with AI factions
+  - More planet styles / rare resources
+  - Event system (random events, discoveries)
+  - Sound effects / music
+  - Multi-system resource management
+  - Galaxy-scale strategic layer
+  - Colonize planets in non-home systems
+  - Improve cluster: dynamic loading as camera moves far
+
+
+================================================================================
+  KEY CONSTANTS QUICK REFERENCE
+================================================================================
+
+// Scene
+FOV = 60, near = 0.1, far = 50000
+TONE_MAPPING_EXPOSURE = 1.4
+BACKGROUND = 0x010108
+FOG = FogExp2(0x010108, 0.008)
+
+// Animation
+LERP_SPEED = 0.045
+FADE_SPEED = 0.06
+RETURN_SPEED = 0.0018
+AUTO_ROTATE_SPEED = 0.00105
+DRAG_SENSITIVITY = 0.005
+DRAG_DAMPING = 0.90
+GALAXY_ORBIT_SENSITIVITY = 0.005
+
+// Spatial
+PLANET_SPACING = 4
+CAM_ALL = { x: -2, y: 0.5, z: 18 }
+CAM_FOCUS_Z = 3.2
+GALAXY_CELL_SIZE = 10
+GALAXY_VIEW_RADIUS = 80
+STAR_PROBABILITY = 0.03
+GALAXY_MASTER_SEED = 0x6A1A5E
+
+// Game
+TICK_INTERVAL = 1.0 seconds
+MAX_SLOTS = 8 buildings per planet
+SAVE_KEY = "endless-horizons-save"
+DAYS_PER_YEAR = 360
+AUTO_SAVE_INTERVAL = 30 days
+
+// Starfield
+STAR_COUNT = 3000 background stars
+
+// Black Hole (from blackhole.js)
+RS = 6                        // Schwarzschild radius
+PHOTON_R = RS * 1.5 = 9      // Photon sphere
+ISCO_R = RS * 3 = 18          // Innermost stable circular orbit
+DISK_INNER = 18               // Disk starts at ISCO
+DISK_OUTER = RS * 30 = 180    // Disk extends to 180 units
+SHADOW_R = RS * 2.6 = 15.6   // Apparent shadow radius
+MAX_STEPS = 400               // Ray-march iterations
+MAX_DIST = 2000               // Max ray travel distance
+bhCam.maxRadius = 5000        // Max zoom distance
+bhCam.minRadius = RS * 2.5 = 15
+Bloom: strength 0.55, radius 0.70, threshold 0.35
+
+================================================================================
+  END OF STATUS DOCUMENT
+================================================================================
