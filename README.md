@@ -1,4 +1,4 @@
-# Endless Horizons — 3D Space Demo
+# 3D Space Demo
 
 ## Overview
 
