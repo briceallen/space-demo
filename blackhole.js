@@ -371,7 +371,8 @@ export function showBlackHole() {
   bhCam.center.set(0, 0, 0);
   bhCam.theta = 1.2;
   bhCam.phi = Math.PI / 2.8;
-  bhCam.radius = 90;
+  bhCam.radius = 160;
+  bhCam.roll = 0;
 }
 
 export function hideBlackHole() {

@@ -140,7 +140,7 @@ const bhLensShader = {
 
       // ── Keplerian shear flow ──
       float orbSpeed = 1.0 / (sqrt(r) + 0.5);
-      float drift = uTime * orbSpeed * 0.55;
+      float drift = uTime * orbSpeed * 0.80;
 
       // ── Smooth turbulence — continuous noise, no thresholds/rings ──
       float sa = sin(angle + drift);
@@ -922,6 +922,9 @@ function exitGalaxyView(targetSeed, targetPos, targetName) {
   if (systemSunLight) systemSunLight.visible = true;
   backgroundStars.visible = true;
 
+  // Reset camera up in case BH roll changed it
+  camera.up.set(0, 1, 0);
+
   camTarget.set(CAM_ALL.x, CAM_ALL.y, CAM_ALL.z);
   lookTarget.set(CAM_ALL.x, 0, 0);
   camCurrent.set(CAM_ALL.x, CAM_ALL.y, CAM_ALL.z);
@@ -975,6 +978,9 @@ function exitBlackHoleView() {
   if ($bhHints) $bhHints.style.display = "none";
 
   scene.fog = new THREE.FogExp2(0x010108, 0.008);
+
+  // Reset camera up in case BH roll changed it
+  camera.up.set(0, 1, 0);
 
   if (systemGroup) systemGroup.visible = true;
   if (systemSunLight) systemSunLight.visible = true;
