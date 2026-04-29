@@ -11,19 +11,17 @@ import { buildStarSystem } from "./starSystem.js";
 import {
   initCluster, generateGalaxyStars, showCluster, hideCluster,
   animateClusterVisuals, updateClusterHover, getHoveredStar,
-  setLastVisitedStar, getLastVisitedStar,
+  setLastVisitedStar,
 } from "./cluster.js";
 import {
   initBlackHole, showBlackHole, hideBlackHole, animateBlackHole,
-  bhCam, getBHCameraPosition,
+  bhCam,
   RS, SHADOW_R, DISK_INNER, DISK_OUTER,
 } from "./blackhole.js";
 import {
-  getGameState, setGameState, newGameState, saveGame, loadGame,
-  gameTick, updateHUD, updatePlanetPanel, initSpeedControls,
-  addBookmark, updateBookmarkDropdown, exportSave, importSave,
-  TICK_INTERVAL,
-} from "./game.js";
+  initMilkyWay, showMilkyWay, hideMilkyWay,
+  animateMilkyWay, updateMilkyWayHover,
+} from "./milkyway.js";
 
 // ── Scene, Camera, Renderer ────────────────────────────────────────
 const scene = new THREE.Scene();
@@ -55,7 +53,7 @@ bhComposer.addPass(new RenderPass(scene, camera, null, new THREE.Color(0x000000)
 // following curved geodesics around the black hole.
 const bhLensShader = {
   uniforms: {
-    tDiffuse:       { value: null },                      // scene (stars/particles)
+    tDiffuse:       { value: null },
     uTime:          { value: 0 },
     uRS:            { value: RS },
     uShadowR:       { value: SHADOW_R },
@@ -89,7 +87,6 @@ const bhLensShader = {
     uniform mat4  uCamMatrix;
     varying vec2 vUv;
 
-    // ── Noise — value noise + FBM for organic disk texture ──
     float hash(float n) { return fract(sin(n) * 43758.5453); }
     float noise(vec2 p) {
       vec2 i = floor(p);
@@ -111,19 +108,16 @@ const bhLensShader = {
       return v;
     }
 
-    // ── Disk color — Gargantua cinematic warm palette ──
-    // Hot white-yellow inner, rich golden mid, deep amber outer
     vec3 diskColor(float t) {
-      vec3 inner  = vec3(1.0, 0.95, 0.85);   // hot near-white
-      vec3 mid1   = vec3(1.0, 0.88, 0.62);   // bright gold
-      vec3 mid2   = vec3(0.98, 0.72, 0.42);  // rich amber
-      vec3 outer  = vec3(0.78, 0.50, 0.28);  // deep warm brown
+      vec3 inner  = vec3(1.0, 0.95, 0.85);
+      vec3 mid1   = vec3(1.0, 0.88, 0.62);
+      vec3 mid2   = vec3(0.98, 0.72, 0.42);
+      vec3 outer  = vec3(0.78, 0.50, 0.28);
       if (t < 0.15) return mix(inner, mid1, smoothstep(0.0, 0.15, t));
       if (t < 0.45) return mix(mid1, mid2, smoothstep(0.15, 0.45, t));
       return mix(mid2, outer, smoothstep(0.45, 1.0, t));
     }
 
-    // ── Disk shading — Gargantua-style smooth flowing accretion ──
     vec4 sampleDisk(vec3 hitPos, float order) {
       float r = length(hitPos.xz);
       if (r < uDiskInner || r > uDiskOuter) return vec4(0.0);
@@ -133,41 +127,32 @@ const bhLensShader = {
 
       vec3 col = diskColor(t);
 
-      // ── Radial brightness — uniform for most of disk, gentle dim at outer edge ──
       float radialGlow = t < 0.65
         ? 0.90 + 0.10 * (1.0 - t / 0.65)
         : 0.90 * pow(1.0 - (t - 0.65) / 0.35, 0.5);
 
-      // ── Keplerian shear flow ──
       float orbSpeed = 1.0 / (sqrt(r) + 0.5);
       float drift = uTime * orbSpeed * 0.80;
 
-      // ── Smooth turbulence — continuous noise, no thresholds/rings ──
       float sa = sin(angle + drift);
       float ca = cos(angle + drift);
 
-      // Layered noise at different scales, all continuous (no smoothstep)
       float n1 = fbm(vec2(sa * 3.5 + ca * 2.5, r * 0.22 + 3.0));
       float n2 = fbm(vec2(sa * 6.0 - ca * 4.0 + 7.0, r * 0.35 + 10.0));
       float n3 = fbm(vec2(sa * 10.0 + ca * 7.0 + 14.0, r * 0.50 + 18.0));
 
-      // Pure continuous blend — weighted noise layers
       float turb = n1 * 0.50 + n2 * 0.30 + n3 * 0.20;
-      // Visible dark features everywhere, stronger toward outer edge
       float variation = 0.20 + t * 0.40;
       float diskDensity = 1.0 - (1.0 - turb) * variation;
 
-      // ── Azimuthal filaments — hair-like flow-aligned structure ──
       float azimTurb = fbm(vec2(
         angle * 4.0 + sin(r * 0.3) * 2.0,
         r * 0.6 + drift * 0.15
       ));
-      // ── Radial dust lanes — soft organic dark lanes ──
       float radialTurb = fbm(vec2(
         r * 1.2 + sin(angle * 3.0) * 0.5,
         angle * 2.0 + drift * 0.2
       ));
-      // Combine: smooth azimuthal flow + softer radial lanes
       float filaments = mix(
         0.78 + 0.22 * azimTurb,
         0.65 + 0.35 * radialTurb * radialTurb,
@@ -176,32 +161,22 @@ const bhLensShader = {
 
       float pattern = diskDensity * filaments;
 
-      // ── Doppler — very subtle, nearly uniform brightness ──
       float doppler = 0.93 + 0.07 * sin(angle + uTime * 0.12);
 
-      // Both direct and lensed arcs at equal brightness
       float orderFade = (order < 2.5) ? 1.0 : 0.7;
 
-      // ── Final color — cinematic, detail from organic patterns ──
       vec3 color = col * radialGlow * doppler * pattern * 0.90 * orderFade;
 
-      // ── Two-stage outer edge: structure preserved + soft feather to space ──
       float innerFade = smoothstep(0.0, 0.08, t);
-      float outerEdge = smoothstep(1.0, 0.92, t);     // sharp definition
-      float outerFeather = smoothstep(1.0, 0.55, t);   // soft glow
+      float outerEdge = smoothstep(1.0, 0.92, t);
+      float outerFeather = smoothstep(1.0, 0.55, t);
       float outerFade = mix(outerEdge, outerFeather, 0.6);
-      // Slight boost in mid-outer zone (0.5–0.85) for richer disk
       float midBoost = 1.0 + 0.12 * smoothstep(0.45, 0.70, t) * smoothstep(0.90, 0.70, t);
       float alpha = clamp(innerFade * outerFade * midBoost * 1.3, 0.0, 1.0) * orderFade;
 
       return vec4(color, alpha);
     }
 
-    // ── High-quality procedural deep-space background ──
-    // Cinematic Milky Way + rich nebulae + sharp individual stars
-    // All in spherical coordinates so gravitational lensing works
-
-    // Better hash for sharp stars — returns [0,1]
     float hash2(vec2 p) {
       vec3 p3 = fract(vec3(p.xyx) * vec3(443.897, 441.423, 437.195));
       p3 += dot(p3, p3.yzx + 19.19);
@@ -213,7 +188,6 @@ const bhLensShader = {
       return fract(vec2((p3.x + p3.y) * p3.z, (p3.x + p3.z) * p3.y));
     }
 
-    // Voronoi-based sharp stars — each cell has one possible star
     float starLayer(vec2 uv, float density, float brightness) {
       vec2 id = floor(uv);
       vec2 f = fract(uv);
@@ -229,7 +203,6 @@ const bhLensShader = {
           float d = length(diff);
           float size = 0.015 + hash2(cell + 200.0) * 0.025;
           float glow = exp(-d * d / (size * size));
-          // Subtle diffraction spikes — only rare brightest stars
           float spikes = 0.0;
           if (starPresence < density * 0.04) {
             float ax = exp(-abs(diff.x) * 120.0) * exp(-abs(diff.y) * 6.0);
@@ -242,17 +215,15 @@ const bhLensShader = {
       return star;
     }
 
-    // Star color based on temperature hash
     vec3 starColor(vec2 cell) {
       float temp = hash2(cell + 300.0);
-      if (temp < 0.15) return vec3(0.6, 0.7, 1.0);   // hot blue
-      if (temp < 0.35) return vec3(0.75, 0.85, 1.0);  // blue-white
-      if (temp < 0.65) return vec3(1.0, 0.98, 0.95);  // white
-      if (temp < 0.85) return vec3(1.0, 0.92, 0.78);  // warm yellow
-      return vec3(1.0, 0.75, 0.55);                    // orange giant
+      if (temp < 0.15) return vec3(0.6, 0.7, 1.0);
+      if (temp < 0.35) return vec3(0.75, 0.85, 1.0);
+      if (temp < 0.65) return vec3(1.0, 0.98, 0.95);
+      if (temp < 0.85) return vec3(1.0, 0.92, 0.78);
+      return vec3(1.0, 0.75, 0.55);
     }
 
-    // Colored star layer — returns color contribution
     vec3 coloredStarLayer(vec2 uv, float density, float brightness) {
       vec2 id = floor(uv);
       vec2 f = fract(uv);
@@ -268,7 +239,6 @@ const bhLensShader = {
           float d = length(diff);
           float varSize = 0.012 + hash2(cell + 200.0) * 0.03;
           float glow = exp(-d * d / (varSize * varSize));
-          // Subtle diffraction spikes — only rare brightest stars
           float spikeStr = 0.0;
           if (starPresence < density * 0.03) {
             float ax = exp(-abs(diff.x) * 140.0) * exp(-abs(diff.y) * 8.0);
@@ -285,89 +255,65 @@ const bhLensShader = {
     vec3 galaxyBackground(vec3 dir) {
       vec3 d = normalize(dir);
 
-      // Spherical coordinates — seamless
-      float phi = atan(d.z, d.x);          // [-pi, pi]
-      float theta = asin(clamp(d.y, -1.0, 1.0));  // [-pi/2, pi/2]
+      float phi = atan(d.z, d.x);
+      float theta = asin(clamp(d.y, -1.0, 1.0));
 
-      // sin/cos for seamless noise sampling (no atan discontinuity)
       float sp = sin(phi), cp = cos(phi);
 
-      // ── Deep black sky base — true space black ──
       vec3 sky = vec3(0.001, 0.001, 0.003);
 
-      // ── Milky Way galactic band ──
-      // Tilted ~15° for visual interest
       float tiltedTheta = theta + sp * 0.12;
       float bandCore = exp(-tiltedTheta * tiltedTheta * 14.0);
       float bandWide = exp(-tiltedTheta * tiltedTheta * 3.0);
 
-      // Large-scale galactic structure
       float gn1 = fbm(vec2(sp * 2.5 + cp * 1.5, tiltedTheta * 3.0 + 0.5));
       float gn2 = fbm(vec2(sp * 5.0 - cp * 3.5 + 4.0, tiltedTheta * 6.0 + 2.0));
       float gn3 = fbm(vec2(sp * 10.0 + cp * 7.0 + 8.0, tiltedTheta * 12.0 - 1.0));
 
-      // Dark lanes / dust absorption in the galactic plane
       float dustLanes = fbm(vec2(sp * 8.0 + cp * 5.0 + 20.0, tiltedTheta * 10.0 + 7.0));
       float absorption = smoothstep(0.35, 0.65, dustLanes) * bandCore * 0.7;
 
-      // Unresolved stellar glow of the Milky Way
       float milkyGlow = bandCore * (0.4 + gn1 * 0.35 + gn2 * 0.2) * (1.0 - absorption);
-      // Wider diffuse glow
       float milkyDiffuse = bandWide * (0.15 + gn3 * 0.1) * (1.0 - absorption * 0.5);
 
-      // Milky Way color: warm white core, neutral edges
       vec3 milkyCore = vec3(0.18, 0.16, 0.13);
       vec3 milkyEdge = vec3(0.05, 0.05, 0.06);
       vec3 milkyCol = mix(milkyEdge, milkyCore, bandCore);
       sky += milkyCol * (milkyGlow + milkyDiffuse) * 0.20;
 
-      // ── Galactic center — bright warm glow ──
       float coreAngle = phi * 0.5;
       float galacticCore = exp(-coreAngle * coreAngle * 3.0 - tiltedTheta * tiltedTheta * 20.0);
       sky += vec3(0.35, 0.25, 0.12) * galacticCore * 0.12;
       sky += vec3(0.20, 0.15, 0.05) * galacticCore * galacticCore * 0.15;
 
-      // ── Emission nebulae — colorful patches ──
       float neb1 = fbm(vec2(sp * 4.0 + cp * 3.0 + 30.0, theta * 5.0 + 10.0));
       float neb2 = fbm(vec2(sp * 7.0 - cp * 5.0 + 40.0, theta * 9.0 + 15.0));
       float neb3 = fbm(vec2(sp * 3.0 + cp * 2.0 + 50.0, theta * 4.0 + 20.0));
 
-      // H-alpha red/pink emission — very subtle
       float haRegion = pow(max(neb1 - 0.50, 0.0), 2.0) * bandWide;
       sky += vec3(0.30, 0.06, 0.08) * haRegion * 0.10;
 
-      // Blue reflection nebulae — toned way down
       float blueNeb = pow(max(neb2 - 0.55, 0.0), 2.0) * bandWide;
       sky += vec3(0.05, 0.06, 0.15) * blueNeb * 0.08;
 
-      // Purple/magenta nebula patches — subtle
       float purpleNeb = pow(max(neb3 - 0.55, 0.0), 2.0) * bandWide;
       sky += vec3(0.12, 0.04, 0.15) * purpleNeb * 0.06;
 
-      // ── Dark nebula silhouettes ──
       float darkNeb = fbm(vec2(sp * 6.0 + cp * 4.0 + 60.0, theta * 7.0 + 25.0));
       float darkPatch = smoothstep(0.55, 0.7, darkNeb) * bandCore;
       sky *= (1.0 - darkPatch * 0.6);
 
-      // ── Multi-layer star field ──
-      // Use seamless polar coordinates for star placement
-      // Scale appropriately to avoid bunching at poles
       float cosTheta = cos(theta);
       vec2 starUV1 = vec2(phi * 8.0, theta * 16.0);
       vec2 starUV2 = vec2(phi * 20.0, theta * 40.0);
       vec2 starUV3 = vec2(phi * 50.0, theta * 100.0);
       vec2 starUV4 = vec2(phi * 120.0, theta * 240.0);
 
-      // Bright foreground stars with color + diffraction
       vec3 brightStars = coloredStarLayer(starUV1, 0.05, 1.2);
-      // Medium stars
       vec3 medStars = coloredStarLayer(starUV2, 0.10, 0.6);
-      // Dim numerous stars
       vec3 dimStars = coloredStarLayer(starUV3, 0.20, 0.22);
-      // Background dust of unresolved stars
       float microStars = starLayer(starUV4, 0.35, 0.08);
 
-      // Stars are denser in the Milky Way band
       float starDensityBoost = 1.0 + bandWide * 2.5;
 
       sky += brightStars;
@@ -381,7 +327,6 @@ const bhLensShader = {
     void main() {
       vec4 sceneCol = texture2D(tDiffuse, vUv);
 
-      // ── Reconstruct ray direction from screen UV ──
       vec2 ndc = vUv * 2.0 - 1.0;
       vec4 clipPos = vec4(ndc, -1.0, 1.0);
       vec4 viewPos = uInvProjMatrix * clipPos;
@@ -389,7 +334,6 @@ const bhLensShader = {
       vec3 rayDir = normalize((uCamMatrix * viewPos).xyz);
       vec3 rayPos = uCamPos;
 
-      // ── Ray march through Schwarzschild spacetime ──
       vec3 bhCenter = vec3(0.0);
       vec4 diskAccum = vec4(0.0);
       bool hitHorizon = false;
@@ -406,7 +350,6 @@ const bhLensShader = {
         vec3 toBH = bhCenter - rayPos;
         float dist = length(toBH);
 
-        // Event horizon — slightly larger to ensure deep black center
         if (dist < uRS * 0.98) {
           hitHorizon = true;
           break;
@@ -414,14 +357,9 @@ const bhLensShader = {
 
         if (totalDist > MAX_DIST) break;
 
-        // ── Adaptive step — very fine near photon sphere ──
         float stepSize = max(0.04, dist * 0.02);
         stepSize = min(stepSize, 3.0);
 
-        // ── Schwarzschild geodesic with GR correction ──
-        // The (1 + 3RS/r) term is critical: it dramatically increases
-        // bending near the photon sphere, producing BOTH the over-arc
-        // and under-arc visible simultaneously from any viewing angle.
         vec3 dirToBH = toBH / dist;
         float deflBase = 1.5 * uRS / (dist * dist);
         float grCorrection = 1.0 + 2.2 * uRS / dist;
@@ -433,14 +371,12 @@ const bhLensShader = {
 
         float curY = rayPos.y;
 
-        // ── Disk plane crossings (y = 0) ──
         if (totalDist > 1.0 && prevY * curY < 0.0) {
           float frac = abs(prevY) / (abs(prevY) + abs(curY));
           vec3 hitPos = rayPos - rayDir * stepSize * (1.0 - frac);
 
           order += 1.0;
           vec4 diskSample = sampleDisk(hitPos, order);
-          // Slight attenuation on 2nd+ crossing to prevent double-bright overlap
           float atten = 1.0 - diskAccum.a * 0.25;
           diskAccum.rgb += diskSample.rgb * diskSample.a * atten;
           diskAccum.a = min(diskAccum.a + diskSample.a, 1.0);
@@ -448,31 +384,21 @@ const bhLensShader = {
 
         prevY = curY;
 
-        // ── Photon ring with black gap — Gargantua signature ──
-        // The black gap between disk inner edge and photon ring is the
-        // region between ISCO and the photon sphere where no stable
-        // orbits exist — light bends but no material emits.
         if (dist < uShadowR * 1.15 && dist > uShadowR * 0.85) {
           float ringCenter = uShadowR * 1.0;
           float ringDist = abs(dist - ringCenter);
-          // Ultra-sharp photon ring — the thin bright line
           float ringSharp = exp(-ringDist * ringDist * 25.0);
-          // Slightly wider warm glow around it
           float ringGlow = exp(-ringDist * ringDist * 4.0);
           photonGlow += (ringSharp * 0.035 + ringGlow * 0.006) * stepSize;
         }
       }
 
-      // ── Final composite ──
       vec3 finalCol;
       if (hitHorizon && diskAccum.a < 0.005) {
-        // Pure shadow — absolutely black
         finalCol = vec3(0.0);
       } else if (hitHorizon) {
-        // Disk in front of shadow — pure disk color, no background bleed
         finalCol = diskAccum.rgb;
       } else {
-        // Check if ray passed very close to shadow — darken to enforce clean edge
         vec3 viewDir = normalize((inverse(uCamMatrix) * vec4(rayDir, 0.0)).xyz);
 
         float halfFov = radians(uFov) * 0.5;
@@ -492,10 +418,8 @@ const bhLensShader = {
         finalCol = bgCol * (1.0 - diskAccum.a) + diskAccum.rgb;
       }
 
-      // Photon ring: bright thin ring with warm tint — the Gargantua signature
       if (!(hitHorizon && diskAccum.a < 0.005)) {
         photonGlow = min(photonGlow, 3.0);
-        // Warm peach-white like the reference
         vec3 photonCol = vec3(1.0, 0.92, 0.82) * photonGlow;
         finalCol += photonCol;
       }
@@ -507,16 +431,12 @@ const bhLensShader = {
 const bhLensPass = new ShaderPass(bhLensShader);
 bhComposer.addPass(bhLensPass);
 
-// Bloom — moderate glow that extends the brightness outward
 const bloomPass = new UnrealBloomPass(
   new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.55,  // strength — cinematic glow
-  0.70,  // radius — wide soft spread
-  0.35   // threshold — catches mid-tones for rich glow
+  0.55, 0.70, 0.35
 );
 bhComposer.addPass(bloomPass);
 
-// Cinematic post-processing — chromatic aberration + vignette + film grain + color grading
 const cinematicShader = {
   uniforms: {
     tDiffuse: { value: null },
@@ -524,9 +444,9 @@ const cinematicShader = {
     uVignetteStrength: { value: 0.65 },
     uTime: { value: 0 },
     uGrainStrength: { value: 0.04 },
-    uLiftShadows: { value: new THREE.Vector3(0.01, 0.01, 0.02) },   // very subtle cool shadows
-    uGammaGain: { value: new THREE.Vector3(1.0, 0.98, 0.95) },      // slight warm midtones
-    uHighlightTint: { value: new THREE.Vector3(1.0, 0.97, 0.92) },   // warm highlights
+    uLiftShadows: { value: new THREE.Vector3(0.01, 0.01, 0.02) },
+    uGammaGain: { value: new THREE.Vector3(1.0, 0.98, 0.95) },
+    uHighlightTint: { value: new THREE.Vector3(1.0, 0.97, 0.92) },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -546,7 +466,6 @@ const cinematicShader = {
     uniform vec3 uHighlightTint;
     varying vec2 vUv;
 
-    // Film grain noise
     float grainNoise(vec2 co) {
       return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
     }
@@ -555,7 +474,6 @@ const cinematicShader = {
       vec2 center = vUv - 0.5;
       float dist = length(center);
 
-      // ── Chromatic aberration — radial, stronger at edges ──
       float aberr = uIntensity * (1.0 + dist * 2.0);
       vec2 offset = center * dist * aberr;
       float r = texture2D(tDiffuse, vUv + offset * 1.2).r;
@@ -563,33 +481,21 @@ const cinematicShader = {
       float b = texture2D(tDiffuse, vUv - offset * 1.0).b;
       vec3 col = vec3(r, g, b);
 
-      // ── Color grading: lift/gamma/gain ──
       float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
-
-      // Shadow lift — add subtle blue into dark areas
       float shadowMask = 1.0 - smoothstep(0.0, 0.15, lum);
       col += uLiftShadows * shadowMask;
-
-      // Gamma — warm push to midtones
       col *= uGammaGain;
-
-      // Highlight tint — warm the bright areas
       float highlightMask = smoothstep(0.4, 1.0, lum);
       col = mix(col, col * uHighlightTint, highlightMask);
-
-      // ── Subtle S-curve contrast ──
       col = col / (col + 0.18) * 1.18;
 
-      // ── Film grain — animated, subtle ──
       float grain = grainNoise(vUv * 800.0 + uTime * 100.0) - 0.5;
       col += grain * uGrainStrength * (1.0 - lum * 0.5);
 
-      // ── Vignette — cinematic elliptical, heavier at corners ──
       float vigDist = length(center * vec2(1.1, 1.0));
       float vig = 1.0 - smoothstep(0.30, 0.90, vigDist);
       col *= mix(1.0, vig, uVignetteStrength);
 
-      // ── Edge darkening — extra darkness in extreme corners ──
       float cornerDark = 1.0 - smoothstep(0.6, 1.2, vigDist) * 0.3;
       col *= cornerDark;
 
@@ -654,7 +560,7 @@ function loadStarSystem(seed) {
 let currentSystemSeed = 0;
 let currentStarPos = new THREE.Vector3(0, 0, 0);
 let currentStarName = "Sol";
-let currentSystemResult = loadStarSystem(0);
+let currentSystemResult = null;
 
 // ── Twinkling Starfield ─────────────────────────────────────────────
 const STAR_COUNT = 3000;
@@ -703,10 +609,10 @@ scene.add(backgroundStars);
 // ── Init Modules ────────────────────────────────────────────────────
 initCluster(scene, camera, renderer);
 initBlackHole(scene, camera, renderer);
+initMilkyWay(scene, camera, renderer);
 
 // ── View / Camera State ─────────────────────────────────────────────
-let viewLevel = "system"; // "system" | "galaxy" | "blackhole"
-let gamePhase = "playing";
+let viewLevel = "system"; // "system" | "galaxy" | "blackhole" | "milkyway"
 
 const CAM_ALL = { x: -2, y: 0.5, z: 18 };
 const CAM_FOCUS_Z = 3.2;
@@ -722,16 +628,13 @@ camera.position.copy(camCurrent);
 
 // ── DOM Refs ────────────────────────────────────────────────────────
 const showAllBtn = document.getElementById("show-all-btn");
-const $planetPanel = document.getElementById("planet-panel");
-const $hudTop = document.getElementById("hud-top");
-
-// Navigation buttons
 const $navSolarSystem = document.getElementById("nav-solar-system");
 const $navLocalCluster = document.getElementById("nav-local-cluster");
+const $navMilkyway = document.getElementById("nav-milkyway");
 const $navBlackHole = document.getElementById("nav-black-hole");
 
 // ── Focus / ShowAll ─────────────────────────────────────────────────
-let focusOn = function(planet) {
+function focusOn(planet) {
   focusedPlanet = planet;
   const focusZ = CAM_FOCUS_Z * (planet.radius || 1);
   camTarget.set(planet.x, 0, focusZ);
@@ -742,9 +645,9 @@ let focusOn = function(planet) {
   for (const p of planets) {
     p.fadeTarget = p === planet ? 1 : 0;
   }
-};
+}
 
-let showAll = function() {
+function showAll() {
   for (const p of planets) {
     if (p.displaced) {
       p.returning = true;
@@ -763,98 +666,92 @@ let showAll = function() {
     p.fadeTarget = 1;
     p.group.visible = true;
   }
-};
+}
 
 showAllBtn?.addEventListener("click", () => showAll());
 
-// ── Navigation Buttons ──────────────────────────────────────────────
+// ── Navigation Buttons — show every view except the current one ─────
 function updateNavButtons() {
-  if (!$navSolarSystem || !$navLocalCluster || !$navBlackHole) return;
-
-  // Hide all first
-  $navSolarSystem.style.display = "none";
-  $navLocalCluster.style.display = "none";
-  $navBlackHole.style.display = "none";
-
-  if (gamePhase !== "playing") return;
-  if (focusedPlanet) return; // hide nav when focused on a planet
-
-  if (viewLevel === "system") {
-    $navLocalCluster.style.display = "";
-    $navBlackHole.style.display = "";
-  } else if (viewLevel === "galaxy") {
-    $navSolarSystem.style.display = "";
-    $navBlackHole.style.display = "";
-  } else if (viewLevel === "blackhole") {
-    $navSolarSystem.style.display = "";
-    $navLocalCluster.style.display = "";
+  const inSystem = viewLevel === "system" && !focusedPlanet;
+  $navSolarSystem.style.display = (viewLevel !== "system" || focusedPlanet) ? "" : "none";
+  $navLocalCluster.style.display = (viewLevel !== "galaxy") ? "" : "none";
+  $navMilkyway.style.display = (viewLevel !== "milkyway") ? "" : "none";
+  $navBlackHole.style.display = (viewLevel !== "blackhole") ? "" : "none";
+  // While focused on a planet, hide nav so only "← System View" is shown.
+  if (focusedPlanet) {
+    $navSolarSystem.style.display = "none";
+    $navLocalCluster.style.display = "none";
+    $navMilkyway.style.display = "none";
+    $navBlackHole.style.display = "none";
   }
 }
 
 $navSolarSystem?.addEventListener("click", () => {
-  if (viewLevel === "galaxy") {
-    exitGalaxyView(currentSystemSeed, currentStarPos, currentStarName);
-  } else if (viewLevel === "blackhole") {
-    exitBlackHoleView();
-  }
+  if (focusedPlanet) { showAll(); return; }
+  goToView("system");
 });
+$navLocalCluster?.addEventListener("click", () => goToView("galaxy"));
+$navMilkyway?.addEventListener("click", () => goToView("milkyway"));
+$navBlackHole?.addEventListener("click", () => goToView("blackhole"));
 
-$navLocalCluster?.addEventListener("click", () => {
-  if (viewLevel === "system" && gamePhase === "playing") {
-    enterGalaxyView();
-  } else if (viewLevel === "blackhole") {
-    exitBlackHoleView();
-    enterGalaxyView();
-  }
-});
+function goToView(target) {
+  if (viewLevel === target) return;
+  // Exit current view
+  if (viewLevel === "galaxy") exitGalaxyView();
+  else if (viewLevel === "blackhole") exitBlackHoleView();
+  else if (viewLevel === "milkyway") exitMilkyWayView();
+  // Enter target view
+  if (target === "galaxy") enterGalaxyView();
+  else if (target === "blackhole") enterBlackHoleView();
+  else if (target === "milkyway") enterMilkyWayView();
+  // "system" needs no enter — exits leave us in system
+}
 
-$navBlackHole?.addEventListener("click", () => {
-  if (viewLevel === "system" && gamePhase === "playing") {
-    enterBlackHoleView();
-  } else if (viewLevel === "galaxy") {
-    exitGalaxyView(currentSystemSeed, currentStarPos, currentStarName);
-    enterBlackHoleView();
-  }
-});
-
-// ── Galaxy Orbit Camera ─────────────────────────────────────────────
+// ── Generic Orbit Camera (used by galaxy and milkyway views) ────────
 const galaxyCam = {
-  theta: 0.3,
-  phi: Math.PI / 3,
-  radius: 40,
+  theta: 0.3, phi: Math.PI / 3, radius: 40,
   center: new THREE.Vector3(0, 0, 0),
-  minRadius: 10,
-  maxRadius: 200,
-  isDragging: false,
-  prevX: 0,
-  prevY: 0,
+  minRadius: 10, maxRadius: 200,
+  isDragging: false, prevX: 0, prevY: 0,
+};
+const mwCam = {
+  theta: 0.3, phi: Math.PI / 3, radius: 90,
+  center: new THREE.Vector3(0, 0, 0),
+  minRadius: 4, maxRadius: 1500,
+  isDragging: false, prevX: 0, prevY: 0,
 };
 
-function getGalaxyCameraPosition() {
-  const sinPhi = Math.sin(galaxyCam.phi);
-  const cosPhi = Math.cos(galaxyCam.phi);
-  const sinTheta = Math.sin(galaxyCam.theta);
-  const cosTheta = Math.cos(galaxyCam.theta);
+function getOrbitCameraPosition(c) {
+  const sinPhi = Math.sin(c.phi);
+  const cosPhi = Math.cos(c.phi);
+  const sinTheta = Math.sin(c.theta);
+  const cosTheta = Math.cos(c.theta);
   return new THREE.Vector3(
-    galaxyCam.center.x + galaxyCam.radius * sinPhi * cosTheta,
-    galaxyCam.center.y + galaxyCam.radius * cosPhi,
-    galaxyCam.center.z + galaxyCam.radius * sinPhi * sinTheta,
+    c.center.x + c.radius * sinPhi * cosTheta,
+    c.center.y + c.radius * cosPhi,
+    c.center.z + c.radius * sinPhi * sinTheta,
   );
 }
 
-// ── WASD Keys ───────────────────────────────────────────────────────
+// ── WASD / nav keys ─────────────────────────────────────────────────
 const wasdKeys = { w: false, a: false, s: false, d: false, q: false, e: false, c: false, r: false, f: false, space: false };
 
 // ── Enter / Exit Views ──────────────────────────────────────────────
-function enterGalaxyView() {
-  viewLevel = "galaxy";
-
+function hideSystemObjects() {
   if (systemGroup) systemGroup.visible = false;
   if (systemSunLight) systemSunLight.visible = false;
   backgroundStars.visible = false;
+}
+function showSystemObjects() {
+  if (systemGroup) systemGroup.visible = true;
+  if (systemSunLight) systemSunLight.visible = true;
+  backgroundStars.visible = true;
+}
 
+function enterGalaxyView() {
+  viewLevel = "galaxy";
+  hideSystemObjects();
   showAllBtn.classList.remove("visible");
-  $planetPanel.classList.add("hidden-panel");
   scene.fog = null;
 
   galaxyCam.center.copy(currentStarPos);
@@ -865,37 +762,26 @@ function enterGalaxyView() {
   generateGalaxyStars(currentStarPos);
   showCluster(currentStarPos);
 
-  // Show cluster UI
-  const $centerBtn = document.getElementById("btn-cluster-center");
-  if ($centerBtn) $centerBtn.style.display = "";
-  const $clusterHints = document.getElementById("cluster-hints");
-  if ($clusterHints) $clusterHints.style.display = "";
+  document.getElementById("btn-cluster-center").style.display = "";
+  document.getElementById("cluster-hints").style.display = "";
   const $galaxyLabel = document.getElementById("galaxy-label");
-  if ($galaxyLabel) {
-    $galaxyLabel.textContent = `Current: ${currentStarName}`;
-    $galaxyLabel.style.display = "";
-  }
-  const $bookmarkBtn = document.getElementById("btn-bookmark");
-  if ($bookmarkBtn) $bookmarkBtn.style.display = "";
-  const $bookmarkSelect = document.getElementById("bookmark-select");
-  if ($bookmarkSelect) $bookmarkSelect.style.display = "";
+  $galaxyLabel.textContent = `Current: ${currentStarName}`;
+  $galaxyLabel.style.display = "";
 
   updateNavButtons();
 }
 
 function exitGalaxyView(targetSeed, targetPos, targetName) {
   viewLevel = "system";
-
   hideCluster();
   renderer.domElement.style.cursor = "";
-  const $centerBtn = document.getElementById("btn-cluster-center");
-  if ($centerBtn) $centerBtn.style.display = "none";
-  const $clusterHints = document.getElementById("cluster-hints");
-  if ($clusterHints) $clusterHints.style.display = "none";
+  document.getElementById("btn-cluster-center").style.display = "none";
+  document.getElementById("cluster-hints").style.display = "none";
 
   scene.fog = new THREE.FogExp2(0x010108, 0.008);
 
-  if (targetSeed !== currentSystemSeed) {
+  // Optional: travel to a clicked star
+  if (targetSeed !== undefined && targetSeed !== currentSystemSeed) {
     setLastVisitedStar({
       seed: currentSystemSeed,
       pos: currentStarPos.clone(),
@@ -907,22 +793,9 @@ function exitGalaxyView(targetSeed, targetPos, targetName) {
     currentStarPos.copy(targetPos);
     currentStarName = targetName || generateStarName(targetSeed);
     currentSystemResult = loadStarSystem(targetSeed);
-
-    const gameState = getGameState();
-    if (gameState) {
-      if (targetSeed !== (gameState.homeSystemSeed ?? 0)) {
-        gameState.currentSystemSeed = targetSeed;
-        gameState.currentStarPos = { x: targetPos.x, y: targetPos.y, z: targetPos.z };
-        gameState.currentStarName = currentStarName;
-      }
-    }
   }
 
-  if (systemGroup) systemGroup.visible = true;
-  if (systemSunLight) systemSunLight.visible = true;
-  backgroundStars.visible = true;
-
-  // Reset camera up in case BH roll changed it
+  showSystemObjects();
   camera.up.set(0, 1, 0);
 
   camTarget.set(CAM_ALL.x, CAM_ALL.y, CAM_ALL.z);
@@ -934,57 +807,29 @@ function exitGalaxyView(targetSeed, targetPos, targetName) {
   focusedPlanet = null;
   showAllBtn.classList.remove("visible");
 
-  // Hide galaxy UI
-  const $galaxyLabel = document.getElementById("galaxy-label");
-  if ($galaxyLabel) $galaxyLabel.style.display = "none";
-  const $bookmarkBtn = document.getElementById("btn-bookmark");
-  if ($bookmarkBtn) $bookmarkBtn.style.display = "none";
-  const $bookmarkSelect = document.getElementById("bookmark-select");
-  if ($bookmarkSelect) $bookmarkSelect.style.display = "none";
+  document.getElementById("galaxy-label").style.display = "none";
 
-  const $systemName = document.getElementById("system-name");
-  if ($systemName) $systemName.textContent = currentStarName;
-
+  document.getElementById("system-name").textContent = currentStarName;
   updateNavButtons();
 }
 
 function enterBlackHoleView() {
   viewLevel = "blackhole";
-
-  if (systemGroup) systemGroup.visible = false;
-  if (systemSunLight) systemSunLight.visible = false;
-  backgroundStars.visible = false;
-
+  hideSystemObjects();
   showAllBtn.classList.remove("visible");
-  $planetPanel.classList.add("hidden-panel");
   scene.fog = null;
-
   showBlackHole();
-
-  // Show BH hints
-  const $bhHints = document.getElementById("bh-hints");
-  if ($bhHints) $bhHints.style.display = "";
-
+  document.getElementById("bh-hints").style.display = "";
   updateNavButtons();
 }
 
 function exitBlackHoleView() {
   viewLevel = "system";
-
   hideBlackHole();
-
-  // Hide BH hints
-  const $bhHints = document.getElementById("bh-hints");
-  if ($bhHints) $bhHints.style.display = "none";
-
+  document.getElementById("bh-hints").style.display = "none";
   scene.fog = new THREE.FogExp2(0x010108, 0.008);
-
-  // Reset camera up in case BH roll changed it
   camera.up.set(0, 1, 0);
-
-  if (systemGroup) systemGroup.visible = true;
-  if (systemSunLight) systemSunLight.visible = true;
-  backgroundStars.visible = true;
+  showSystemObjects();
 
   camTarget.set(CAM_ALL.x, CAM_ALL.y, CAM_ALL.z);
   lookTarget.set(CAM_ALL.x, 0, 0);
@@ -995,23 +840,75 @@ function exitBlackHoleView() {
   focusedPlanet = null;
   showAllBtn.classList.remove("visible");
 
-  const $systemName = document.getElementById("system-name");
-  if ($systemName) $systemName.textContent = currentStarName;
-
+  document.getElementById("system-name").textContent = currentStarName;
   updateNavButtons();
 }
 
-// ── Center Button ───────────────────────────────────────────────────
-const $centerBtn = document.getElementById("btn-cluster-center");
-if ($centerBtn) {
-  $centerBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
-  $centerBtn.addEventListener("click", () => {
-    if (viewLevel === "galaxy") {
-      galaxyCam.center.copy(currentStarPos);
-      for (const k in wasdKeys) wasdKeys[k] = false;
-    }
-  });
+function enterMilkyWayView() {
+  viewLevel = "milkyway";
+  hideSystemObjects();
+  showAllBtn.classList.remove("visible");
+  scene.fog = null;
+
+  // Camera starts orbiting Sol at the origin.
+  mwCam.center.set(0, 0, 0);
+  mwCam.theta = 0.3;
+  mwCam.phi = Math.PI / 3;
+  mwCam.radius = 90;
+
+  showMilkyWay();
+
+  document.getElementById("mw-label").style.display = "";
+  document.getElementById("mw-hints").style.display = "";
+  document.getElementById("btn-mw-center").style.display = "";
+  updateNavButtons();
 }
+
+function exitMilkyWayView() {
+  viewLevel = "system";
+  hideMilkyWay();
+  document.getElementById("mw-label").style.display = "none";
+  document.getElementById("mw-hints").style.display = "none";
+  document.getElementById("btn-mw-center").style.display = "none";
+
+  scene.fog = new THREE.FogExp2(0x010108, 0.008);
+  camera.up.set(0, 1, 0);
+  showSystemObjects();
+
+  camTarget.set(CAM_ALL.x, CAM_ALL.y, CAM_ALL.z);
+  lookTarget.set(CAM_ALL.x, 0, 0);
+  camCurrent.set(CAM_ALL.x, CAM_ALL.y, CAM_ALL.z);
+  lookCurrent.set(CAM_ALL.x, 0, 0);
+  camera.position.copy(camCurrent);
+
+  focusedPlanet = null;
+  showAllBtn.classList.remove("visible");
+
+  document.getElementById("system-name").textContent = currentStarName;
+  updateNavButtons();
+}
+
+// ── Center Buttons ──────────────────────────────────────────────────
+const $clusterCenterBtn = document.getElementById("btn-cluster-center");
+$clusterCenterBtn?.addEventListener("pointerdown", (e) => e.stopPropagation());
+$clusterCenterBtn?.addEventListener("click", () => {
+  if (viewLevel === "galaxy") {
+    galaxyCam.center.copy(currentStarPos);
+    for (const k in wasdKeys) wasdKeys[k] = false;
+  }
+});
+
+const $mwCenterBtn = document.getElementById("btn-mw-center");
+$mwCenterBtn?.addEventListener("pointerdown", (e) => e.stopPropagation());
+$mwCenterBtn?.addEventListener("click", () => {
+  if (viewLevel === "milkyway") {
+    mwCam.center.set(0, 0, 0);
+    mwCam.theta = 0.3;
+    mwCam.phi = Math.PI / 3;
+    mwCam.radius = 90;
+    for (const k in wasdKeys) wasdKeys[k] = false;
+  }
+});
 
 // ── Drag State ──────────────────────────────────────────────────────
 const dragState = {
@@ -1023,7 +920,7 @@ const dragState = {
 
 const DRAG_SENSITIVITY = 0.005;
 const DRAG_DAMPING = 0.90;
-const GALAXY_ORBIT_SENSITIVITY = 0.005;
+const ORBIT_SENSITIVITY = 0.005;
 
 const canvas = renderer.domElement;
 let lastMouseX = 0;
@@ -1043,6 +940,14 @@ canvas.addEventListener("pointerdown", (e) => {
     galaxyCam.isDragging = true;
     galaxyCam.prevX = e.clientX;
     galaxyCam.prevY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+    return;
+  }
+
+  if (viewLevel === "milkyway") {
+    mwCam.isDragging = true;
+    mwCam.prevX = e.clientX;
+    mwCam.prevY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
     return;
   }
@@ -1073,19 +978,30 @@ window.addEventListener("pointermove", (e) => {
   if (viewLevel === "galaxy" && galaxyCam.isDragging) {
     const dx = e.clientX - galaxyCam.prevX;
     const dy = e.clientY - galaxyCam.prevY;
-    galaxyCam.theta -= dx * GALAXY_ORBIT_SENSITIVITY;
-    galaxyCam.phi -= dy * GALAXY_ORBIT_SENSITIVITY;
+    galaxyCam.theta -= dx * ORBIT_SENSITIVITY;
+    galaxyCam.phi -= dy * ORBIT_SENSITIVITY;
     galaxyCam.phi = Math.max(0.1, Math.min(Math.PI - 0.1, galaxyCam.phi));
     galaxyCam.prevX = e.clientX;
     galaxyCam.prevY = e.clientY;
     return;
   }
 
+  if (viewLevel === "milkyway" && mwCam.isDragging) {
+    const dx = e.clientX - mwCam.prevX;
+    const dy = e.clientY - mwCam.prevY;
+    mwCam.theta -= dx * ORBIT_SENSITIVITY;
+    mwCam.phi -= dy * ORBIT_SENSITIVITY;
+    mwCam.phi = Math.max(0.1, Math.min(Math.PI - 0.1, mwCam.phi));
+    mwCam.prevX = e.clientX;
+    mwCam.prevY = e.clientY;
+    return;
+  }
+
   if (viewLevel === "blackhole" && bhCam.isDragging) {
     const dx = e.clientX - bhCam.prevX;
     const dy = e.clientY - bhCam.prevY;
-    bhCam.theta -= dx * GALAXY_ORBIT_SENSITIVITY;
-    bhCam.phi -= dy * GALAXY_ORBIT_SENSITIVITY;
+    bhCam.theta -= dx * ORBIT_SENSITIVITY;
+    bhCam.phi -= dy * ORBIT_SENSITIVITY;
     bhCam.phi = Math.max(0.1, Math.min(Math.PI - 0.1, bhCam.phi));
     bhCam.prevX = e.clientX;
     bhCam.prevY = e.clientY;
@@ -1109,11 +1025,15 @@ window.addEventListener("pointerup", (e) => {
   if (viewLevel === "galaxy") {
     galaxyCam.isDragging = false;
     if (!wasClick) return;
-
     const star = getHoveredStar();
     if (star) {
       exitGalaxyView(star.seed, new THREE.Vector3(star.x, star.y, star.z), star.name);
     }
+    return;
+  }
+
+  if (viewLevel === "milkyway") {
+    mwCam.isDragging = false;
     return;
   }
 
@@ -1142,12 +1062,15 @@ window.addEventListener("pointerup", (e) => {
   }
 });
 
-// Scroll wheel
 canvas.addEventListener("wheel", (e) => {
   if (viewLevel === "galaxy") {
     e.preventDefault();
     galaxyCam.radius += e.deltaY * 0.05;
     galaxyCam.radius = Math.max(galaxyCam.minRadius, Math.min(galaxyCam.maxRadius, galaxyCam.radius));
+  } else if (viewLevel === "milkyway") {
+    e.preventDefault();
+    mwCam.radius += e.deltaY * 0.05;
+    mwCam.radius = Math.max(mwCam.minRadius, Math.min(mwCam.maxRadius, mwCam.radius));
   } else if (viewLevel === "blackhole") {
     e.preventDefault();
     bhCam.radius += e.deltaY * 0.05;
@@ -1155,7 +1078,6 @@ canvas.addEventListener("wheel", (e) => {
   }
 }, { passive: false });
 
-// Resize
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
@@ -1164,16 +1086,12 @@ window.addEventListener("resize", () => {
   bhLensPass.uniforms.uAspect.value = camera.aspect;
 });
 
-// Keyboard
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
-    if (viewLevel === "galaxy") {
-      exitGalaxyView(currentSystemSeed, currentStarPos, currentStarName);
-    } else if (viewLevel === "blackhole") {
-      exitBlackHoleView();
-    } else if (focusedPlanet) {
-      showAll();
-    }
+    if (viewLevel === "galaxy") exitGalaxyView();
+    else if (viewLevel === "blackhole") exitBlackHoleView();
+    else if (viewLevel === "milkyway") exitMilkyWayView();
+    else if (focusedPlanet) showAll();
   }
   const k = e.key.toLowerCase();
   if (k in wasdKeys) { wasdKeys[k] = true; e.preventDefault(); }
@@ -1187,16 +1105,10 @@ window.addEventListener("keyup", (e) => {
 });
 
 window.addEventListener("contextmenu", (e) => {
-  if (viewLevel === "galaxy") {
-    e.preventDefault();
-    exitGalaxyView(currentSystemSeed, currentStarPos, currentStarName);
-  } else if (viewLevel === "blackhole") {
-    e.preventDefault();
-    exitBlackHoleView();
-  } else if (focusedPlanet) {
-    e.preventDefault();
-    showAll();
-  }
+  if (viewLevel === "galaxy") { e.preventDefault(); exitGalaxyView(); }
+  else if (viewLevel === "milkyway") { e.preventDefault(); exitMilkyWayView(); }
+  else if (viewLevel === "blackhole") { e.preventDefault(); exitBlackHoleView(); }
+  else if (focusedPlanet) { e.preventDefault(); showAll(); }
 });
 
 // ── Animation Helpers ───────────────────────────────────────────────
@@ -1209,7 +1121,19 @@ const AUTO_ROTATE_SPEED = 0.00105;
 // ── Animation Loop ──────────────────────────────────────────────────
 const clock = new THREE.Clock();
 let lastFrameTime = 0;
-let tickAccum = 0;
+
+function flyOrbitCam(c, dt) {
+  const flySpeed = dt * c.radius * 0.5;
+  const camPos0 = getOrbitCameraPosition(c);
+  const fwd = new THREE.Vector3().subVectors(c.center, camPos0).setY(0).normalize();
+  const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+  if (wasdKeys.w) c.center.addScaledVector(fwd, flySpeed);
+  if (wasdKeys.s) c.center.addScaledVector(fwd, -flySpeed);
+  if (wasdKeys.a || wasdKeys.q) c.center.addScaledVector(right, -flySpeed);
+  if (wasdKeys.d || wasdKeys.e) c.center.addScaledVector(right, flySpeed);
+  if (wasdKeys.space) c.center.y += flySpeed;
+  if (wasdKeys.c) c.center.y -= flySpeed;
+}
 
 function animate() {
   requestAnimationFrame(animate);
@@ -1219,18 +1143,8 @@ function animate() {
 
   // ── GALAXY VIEW ──
   if (viewLevel === "galaxy") {
-    const flySpeed = dt * galaxyCam.radius * 0.5;
-    const camPos0 = getGalaxyCameraPosition();
-    const fwd = new THREE.Vector3().subVectors(galaxyCam.center, camPos0).setY(0).normalize();
-    const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
-    if (wasdKeys.w) galaxyCam.center.addScaledVector(fwd, flySpeed);
-    if (wasdKeys.s) galaxyCam.center.addScaledVector(fwd, -flySpeed);
-    if (wasdKeys.a || wasdKeys.q) galaxyCam.center.addScaledVector(right, -flySpeed);
-    if (wasdKeys.d || wasdKeys.e) galaxyCam.center.addScaledVector(right, flySpeed);
-    if (wasdKeys.space) galaxyCam.center.y += flySpeed;
-    if (wasdKeys.c) galaxyCam.center.y -= flySpeed;
-
-    const camPos = getGalaxyCameraPosition();
+    flyOrbitCam(galaxyCam, dt);
+    const camPos = getOrbitCameraPosition(galaxyCam);
     camera.position.copy(camPos);
     camera.lookAt(galaxyCam.center);
 
@@ -1238,7 +1152,21 @@ function animate() {
     if (!galaxyCam.isDragging) {
       updateClusterHover(mouseNDC, lastMouseX, lastMouseY, galaxyCam.isDragging);
     }
+    renderer.render(scene, camera);
+    return;
+  }
 
+  // ── MILKYWAY VIEW ──
+  if (viewLevel === "milkyway") {
+    flyOrbitCam(mwCam, dt);
+    const camPos = getOrbitCameraPosition(mwCam);
+    camera.position.copy(camPos);
+    camera.lookAt(mwCam.center);
+
+    animateMilkyWay(t, dt, camPos);
+    if (!mwCam.isDragging) {
+      updateMilkyWayHover(mouseNDC, lastMouseX, lastMouseY, mwCam.isDragging);
+    }
     renderer.render(scene, camera);
     return;
   }
@@ -1247,7 +1175,6 @@ function animate() {
   if (viewLevel === "blackhole") {
     animateBlackHole(t, dt, wasdKeys);
 
-    // Update ray-march shader uniforms
     const lensU = bhLensPass.uniforms;
     lensU.uTime.value = t;
     lensU.uCamPos.value.copy(camera.position);
@@ -1256,7 +1183,6 @@ function animate() {
     lensU.uInvProjMatrix.value.copy(camera.projectionMatrixInverse);
     lensU.uCamMatrix.value.copy(camera.matrixWorld);
 
-    // Update cinematic post-processing time for animated grain
     cinematicPass.uniforms.uTime.value = t;
 
     scene.fog = null;
@@ -1308,7 +1234,6 @@ function animate() {
     }
   });
 
-  // Drag-to-rotate focused planet
   if (focusedPlanet && !focusedPlanet.returning) {
     if (dragState.isDragging) {
       tempQuat.setFromAxisAngle(axisY, dragState.velocityX);
@@ -1329,7 +1254,6 @@ function animate() {
 
   planets.forEach((p) => p.group.quaternion.copy(p.rotationQuat));
 
-  // Twinkle stars
   const sizeAttr = starGeo.getAttribute("size");
   for (let i = 0; i < STAR_COUNT; i++) {
     const flicker = starBaseAlphas[i] * (0.5 + 0.5 * Math.sin(t * starSpeeds[i] + i * 1.7));
@@ -1337,7 +1261,6 @@ function animate() {
   }
   sizeAttr.needsUpdate = true;
 
-  // Camera
   camCurrent.lerp(camTarget, LERP_SPEED);
   lookCurrent.lerp(lookTarget, LERP_SPEED);
   camera.position.copy(camCurrent);
@@ -1345,123 +1268,19 @@ function animate() {
 
   fillLight.position.y = -3 + Math.sin(t * 0.3) * 0.8;
 
-  // Game Tick
-  const gameState = getGameState();
-  if (gameState && gameState.speed > 0 && gamePhase === "playing") {
-    tickAccum += dt * gameState.speed;
-    while (tickAccum >= TICK_INTERVAL) {
-      tickAccum -= TICK_INTERVAL;
-      gameTick();
-    }
-    updateHUD();
-    if (focusedPlanet) updatePlanetPanel(focusedPlanet);
-  }
-
   renderer.render(scene, camera);
 }
 
-// ── Game Phase ──────────────────────────────────────────────────────
-
-function enterPlaying() {
-  gamePhase = "playing";
-  $hudTop.classList.remove("hidden-panel");
-
-  const $hudGameInfo = document.getElementById("hud-game-info");
-  const $hudResources = document.getElementById("hud-resources");
-  const $hudPopWrap = document.getElementById("hud-pop-wrap");
-  if ($hudGameInfo) $hudGameInfo.style.display = "none";
-  if ($hudResources) $hudResources.style.display = "none";
-  if ($hudPopWrap) $hudPopWrap.style.display = "none";
-
-  updateHUD();
-  updateBookmarkDropdown();
-
-  const $systemName = document.getElementById("system-name");
-  if ($systemName) $systemName.textContent = currentStarName;
-
-  showAll();
-  updateNavButtons();
-
-  // Default to black hole view on startup
-  enterBlackHoleView();
-}
-
-// ── Hook focusOn / showAll for game ─────────────────────────────────
-const _origFocusOn = focusOn;
-focusOn = function(planet) {
-  if (gamePhase === "playing") {
-    _origFocusOn(planet);
-    updatePlanetPanel(planet);
-  }
-};
-
-const _origShowAll = showAll;
-showAll = function() {
-  _origShowAll();
-  $planetPanel.classList.add("hidden-panel");
-};
-
-// ── Bookmark Handlers ───────────────────────────────────────────────
-const $bookmarkBtn = document.getElementById("btn-bookmark");
-if ($bookmarkBtn) {
-  $bookmarkBtn.addEventListener("click", () => addBookmark(currentSystemSeed, currentStarName, currentStarPos));
-}
-
-const $bookmarkSelect = document.getElementById("bookmark-select");
-if ($bookmarkSelect) {
-  $bookmarkSelect.addEventListener("change", (e) => {
-    const gameState = getGameState();
-    if (!gameState) return;
-    const bookmarks = gameState.bookmarks || [];
-    const bm = bookmarks.find(b => b.seed === Number(e.target.value));
-    if (!bm) return;
-    const targetPos = new THREE.Vector3(bm.x, bm.y, bm.z);
-    exitGalaxyView(bm.seed, targetPos, bm.name);
-    e.target.selectedIndex = 0;
-  });
-}
-
-// ── Save / Export / Import Handlers ─────────────────────────────────
-document.getElementById("btn-save")?.addEventListener("click", saveGame);
-document.getElementById("btn-export")?.addEventListener("click", exportSave);
-document.getElementById("btn-import")?.addEventListener("click", () => importSave(enterPlaying));
-
-// ── Init Speed Controls ─────────────────────────────────────────────
-initSpeedControls();
-
 // ── Boot ────────────────────────────────────────────────────────────
 {
-  const saved = loadGame();
-  if (saved) {
-    setGameState(saved);
-    const gs = saved;
-    if (!gs.bookmarks) gs.bookmarks = [];
-    if (!gs.currentStarName) gs.currentStarName = "Sol";
-    if (!gs.currentStarPos) gs.currentStarPos = { x: 0, y: 0, z: 0 };
-    if (gs.currentSystemSeed === undefined) gs.currentSystemSeed = 0;
-    if (gs.homeSystemSeed === undefined) gs.homeSystemSeed = 0;
+  const seed = (Math.random() * 0xFFFFFFFF) >>> 0;
+  currentSystemSeed = seed;
+  currentStarPos.set(0, 0, 0);
+  currentStarName = generateStarName(seed);
+  currentSystemResult = loadStarSystem(seed);
 
-    currentSystemSeed = gs.currentSystemSeed;
-    currentStarPos.set(
-      gs.currentStarPos.x || 0,
-      gs.currentStarPos.y || 0,
-      gs.currentStarPos.z || 0,
-    );
-    currentStarName = gs.currentStarName;
-    if (currentSystemSeed !== 0) {
-      currentSystemResult = loadStarSystem(currentSystemSeed);
-    }
-  } else {
-    const seed = (Math.random() * 0xFFFFFFFF) >>> 0;
-    currentSystemSeed = seed;
-    currentStarPos.set(0, 0, 0);
-    currentStarName = generateStarName(seed);
-    currentSystemResult = loadStarSystem(seed);
-    const homePlanet = planets.find(p => p.name !== "sun");
-    if (homePlanet) {
-      setGameState(newGameState(planets, currentSystemSeed, currentStarPos, currentStarName));
-    }
-  }
-  enterPlaying();
+  document.getElementById("system-name").textContent = currentStarName;
+  showAll();
+  updateNavButtons();
 }
 animate();

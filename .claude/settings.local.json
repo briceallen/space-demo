@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:8765/hyg_v42.csv)",
+      "Bash(grep -nE '^\\(id|hip|proper|dist|x|y|z|spect|absmag|mag|con\\)$')",
+      "Bash(node --check main.js)",
+      "Bash(node --check milkyway.js)"
+    ]
+  }
+}

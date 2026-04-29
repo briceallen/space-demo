@@ -2,15 +2,14 @@
 
 ## Overview
 
-This is a browser-based, interactive 3D space demo. Built entirely with Three.js (v0.164.0), Tailwind CSS, and vanilla JavaScript ES modules, it runs directly in any modern browser—no build tools, no bundlers, no frameworks required.
+A browser-based, interactive 3D space sandbox built entirely with Three.js (v0.164.0), Tailwind CSS, and vanilla JavaScript ES modules. No build tools, no bundlers, no frameworks — opens directly in any modern browser.
 
-The project features:
-- A fully interactive 3D solar system with a sun and multiple planets
-- Procedurally generated planet textures and atmospheric effects
-- Black hole scene with ray-marched lensing and starfield
-- Click-to-focus, drag-to-rotate, and smooth camera controls
-- Cinematic post-processing (bloom, custom shaders)
-- Modular codebase for easy experimentation
+The demo currently has four views, switchable via the top-bar tabs:
+
+- **☀ Solar System** — Procedurally generated sun + planets with continent textures, click-to-focus, drag-to-rotate.
+- **🌌 Local Cluster** — Procedural 3D star field around the current system, WASD to fly, click stars to travel.
+- **🌠 Milkyway** — Realistic 50 nearest stars to Sol, positioned and scaled from the [HYG v4.2 database](https://www.astronexus.com/projects/hyg).
+- **🕳️ Black Hole** — Ray-marched Gargantua-style black hole with Schwarzschild lensing, accretion disk, photon ring, and cinematic post-processing.
 
 ## Tech Stack
 
@@ -22,26 +21,34 @@ The project features:
 
 ## File Structure
 
-- `index.html` — HTML shell, UI overlays, Tailwind CSS via CDN
-- `main.js` — Main Three.js scene logic and game state
-- `blackhole.js` — Black hole scene, camera, starfield, particles
-- `starSystem.js` — Solar system/planet logic
-- `textures.js` — Procedural texture generation
-- `utils.js` — Utility functions
-- `spectral.js` — Color and spectral calculations
-- `planned.txt`, `next-steps.txt` — Planning notes
-- `project-writeup.txt`, `project-status.txt` — Documentation
+- `index.html` — HTML shell, top nav bar, view-specific UI panels
+- `main.js` — Scene setup, camera, animation loop, view switching, input
+- `starSystem.js` — Builds a procedural star system from a seed
+- `cluster.js` — Procedural local cluster generation and rendering
+- `milkyway.js` — HYG-database-driven realistic nearest-stars view
+- `blackhole.js` — Black hole scene objects, orbit camera, particles
+- `textures.js` — Procedural planet/sun textures (3D Perlin + fBm)
+- `spectral.js` — Spectral types, planet palettes, layout constants
+- `utils.js` — PRNG, hashing, star name generator, easing
+- `hyg_v42.csv` — Astronexus HYG v4.2 star catalog (used by milkyway.js)
 
 ## Running the Project
 
-Just open `index.html` in your browser, or serve the folder with a static server:
+The Milkyway view uses `fetch()` to load the CSV, so you need a local HTTP server (opening `index.html` from disk won't work for that view). Pick one:
 
 ```sh
+# Option 1 — Node (no install needed if you have npx)
 npx serve .
-# or
-python -m http.server
+
+# Option 2 — Python 3
+python -m http.server 8000
+
+# Option 3 — Python 2
+python -m SimpleHTTPServer 8000
 ```
+
+Then open the printed URL (typically <http://localhost:8000> or <http://localhost:3000>) in a browser.
 
 ## Credits
 
-Created by Brice. Built with Three.js, Tailwind CSS, and a love for space games.
+Star data from the [HYG database v4.2](https://www.astronexus.com/projects/hyg) (CC BY-SA 2.5). Built with Three.js and Tailwind CSS.

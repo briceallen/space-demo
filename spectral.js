@@ -1,15 +1,9 @@
 // ══════════════════════════════════════════════════════════════════════
-// ██  GAME & VISUAL CONSTANTS — Spectral Types, Palettes, Yields
+// ██  VISUAL CONSTANTS — Spectral Types, Planet Palettes, Layout
 // ══════════════════════════════════════════════════════════════════════
 
 export const PLANET_SPACING = 4;
 export const DEG = Math.PI / 180;
-
-export const STYLE_YIELDS = {
-  oceanic:      { energy: 2, minerals: 1, food: 4, research: 1, alloys: 0 },
-  scattered:    { energy: 3, minerals: 4, food: 1, research: 1, alloys: 1 },
-  continental:  { energy: 2, minerals: 2, food: 3, research: 2, alloys: 0 },
-};
 
 export const PLANET_STYLES = ["oceanic", "scattered", "continental"];
 
@@ -32,6 +26,18 @@ export function pickSpectralType(rng) {
   return SPECTRAL_TYPES[0];
 }
 
+// Map a HYG `spect` string (e.g. "G2V", "M3.5", "B0Iab") to one of our 6 SPECTRAL_TYPES.
+// O and B both fold into the OB entry; brown dwarfs and unknowns fall back to M.
+export function spectralTypeFromHyg(spect) {
+  if (!spect) return SPECTRAL_TYPES[0];
+  const m = String(spect).trim().match(/^([OBAFGKM])/i);
+  if (!m) return SPECTRAL_TYPES[0];
+  const letter = m[1].toUpperCase();
+  if (letter === "O" || letter === "B") return SPECTRAL_TYPES[5];
+  const idx = { M: 0, K: 1, G: 2, F: 3, A: 4 }[letter];
+  return SPECTRAL_TYPES[idx ?? 0];
+}
+
 export const PLANET_PALETTES = [
   { surface: 0x1c2050, emissive: 0x101840, wire: 0x7088cc, glow: 0x4466dd, atmos: 0x5599ff },
   { surface: 0x3d1c22, emissive: 0x281010, wire: 0xbb7080, glow: 0xcc5566, atmos: 0xff7766 },
@@ -40,14 +46,3 @@ export const PLANET_PALETTES = [
   { surface: 0x3a3020, emissive: 0x201810, wire: 0xbb9955, glow: 0xcc8844, atmos: 0xffbb66 },
   { surface: 0x1a3038, emissive: 0x0e1820, wire: 0x55aabb, glow: 0x4499aa, atmos: 0x66ccdd },
 ];
-
-export const BUILDING_DEFS = {
-  solarArray:  { label: "Solar Array",  icon: "⚡", cost: { minerals: 30 },                buildDays: 10, yields: { energy: 4 } },
-  mine:        { label: "Mine",         icon: "⛏",  cost: { energy: 20 },                  buildDays: 8,  yields: { minerals: 3 } },
-  farmDome:    { label: "Farm Dome",    icon: "🌾", cost: { energy: 15, minerals: 10 },    buildDays: 6,  yields: { food: 4 } },
-  researchLab: { label: "Research Lab", icon: "🔬", cost: { energy: 25, minerals: 20 },    buildDays: 14, yields: { research: 3 } },
-  foundry:     { label: "Foundry",      icon: "⚙",  cost: { energy: 30, minerals: 40 },    buildDays: 18, yields: { alloys: 2, minerals: -1 } },
-};
-
-export const MAX_SLOTS = 8;
-export const SAVE_KEY = "endless-horizons-save";
